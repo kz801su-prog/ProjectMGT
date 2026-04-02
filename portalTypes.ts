@@ -16,7 +16,7 @@ export interface PortalUser {
     id: string;
     name: string;
     email?: string;
-    role: 'admin' | 'manager' | 'user';
+    role: 'admin' | 'manager' | 'user' | 'executive';
     password?: string;      // ポータルログイン用パスワード
     department?: string;    // 部門
     employeeId?: string;    // 社員ID
@@ -65,7 +65,7 @@ export interface ProjectMember {
     name: string;
     email: string;
     type: 'internal' | 'external';
-    role: 'admin' | 'manager' | 'user';
+    role: 'admin' | 'manager' | 'user' | 'executive';
 }
 
 /** 目標エピック（役割 + 重み + ルール + ゴール） */
@@ -78,6 +78,7 @@ export interface GoalEpic {
     rule: string;            // ルール（皆が参照できる）
     status: 'active' | 'completed';  // エピックの状態
     score?: number;          // 評価者がつけた点数 (0-100)
+    totalScore?: number;     // 部門長の総合評価 (0-10)
     scoredBy?: string;       // 評価者名
     scoredAt?: string;       // 評価日時
     memberScores?: GoalEpicMemberScore[];  // メンバー別スコア

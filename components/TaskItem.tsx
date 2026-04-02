@@ -81,13 +81,21 @@ export const TaskItem: React.FC<Props> = ({
   const [isTeamDropdownOpen, setIsTeamDropdownOpen] = useState(false);
   const [isProjectDropdownOpen, setIsProjectDropdownOpen] = useState(false);
   const [isReviewerDropdownOpen, setIsReviewerDropdownOpen] = useState(false);
+  const [responsibleSearch, setResponsibleSearch] = useState('');
+  const [reviewerSearch, setReviewerSearch] = useState('');
+  const [teamSearch, setTeamSearch] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [localGoal, setLocalGoal] = useState(task.goal || '');
+  const [localDescription, setLocalDescription] = useState(task.description || '');
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setLocalGoal(task.goal || '');
   }, [task.goal]);
+
+  useEffect(() => {
+    setLocalDescription(task.description || '');
+  }, [task.description]);
 
   useEffect(() => {
     if (isInitiallyExpanded) {
@@ -357,31 +365,52 @@ export const TaskItem: React.FC<Props> = ({
 
             {isMemberDropdownOpen && (
               <>
-                <div className="fixed inset-0 z-[40]" onClick={(e) => { e.stopPropagation(); setIsMemberDropdownOpen(false); }} />
-                <div className="absolute top-full right-0 mt-2 w-56 bg-white rounded-2xl shadow-xl border border-slate-100 z-[50] overflow-hidden animate-in fade-in zoom-in duration-200">
-                  <div className="p-3 bg-slate-50 border-b border-slate-100">
+                <div className="fixed inset-0 z-[40]" onClick={(e) => { e.stopPropagation(); setIsMemberDropdownOpen(false); setResponsibleSearch(''); }} />
+                <div className="absolute top-full right-0 mt-2 w-64 bg-white rounded-2xl shadow-xl border border-slate-100 z-[50] overflow-hidden animate-in fade-in zoom-in duration-200">
+                  <div className="p-3 bg-slate-50 border-b border-slate-100 space-y-2">
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">担当者を変更</p>
+                    <input
+                      autoFocus
+                      type="text"
+                      placeholder="名前・部門で絞り込み..."
+                      value={responsibleSearch}
+                      onChange={e => setResponsibleSearch(e.target.value)}
+                      onClick={e => e.stopPropagation()}
+                      className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:border-red-400"
+                    />
                   </div>
-                  <div className="max-h-[300px] overflow-y-auto custom-scrollbar p-2">
-                    {members.length > 0 ? members.map((m, i) => (
+                  <div className="max-h-[260px] overflow-y-auto custom-scrollbar p-2">
+                    {members.filter(m =>
+                      !responsibleSearch ||
+                      m.name.toLowerCase().includes(responsibleSearch.toLowerCase()) ||
+                      (m.department || '').toLowerCase().includes(responsibleSearch.toLowerCase())
+                    ).length > 0 ? members.filter(m =>
+                      !responsibleSearch ||
+                      m.name.toLowerCase().includes(responsibleSearch.toLowerCase()) ||
+                      (m.department || '').toLowerCase().includes(responsibleSearch.toLowerCase())
+                    ).map((m, i) => (
                       <button
                         key={i}
                         onClick={(e) => {
                           e.stopPropagation();
                           onUpdateTaskDetails?.(task.id, { responsiblePerson: m.name });
                           setIsMemberDropdownOpen(false);
+                          setResponsibleSearch('');
                         }}
-                        className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-xs font-bold transition-all ${task.responsiblePerson === m.name ? 'bg-red-50 text-red-600' : 'text-slate-600 hover:bg-slate-50'}`}
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all ${task.responsiblePerson === m.name ? 'bg-red-50 text-red-600' : 'text-slate-600 hover:bg-slate-50'}`}
                       >
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black ${task.responsiblePerson === m.name ? 'bg-red-200 text-red-700' : 'bg-slate-200 text-slate-500'}`}>
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black flex-shrink-0 ${task.responsiblePerson === m.name ? 'bg-red-200 text-red-700' : 'bg-slate-200 text-slate-500'}`}>
                           {m.name.slice(0, 1)}
                         </div>
-                        <span>{m.name}</span>
-                        {task.responsiblePerson === m.name && <Check className="w-3 h-3 ml-auto text-red-500" />}
+                        <div className="flex-1 min-w-0 text-left">
+                          <p className="truncate">{m.name}</p>
+                          {m.department && <p className="text-[9px] text-slate-400 font-bold">{m.department}</p>}
+                        </div>
+                        {task.responsiblePerson === m.name && <Check className="w-3 h-3 flex-shrink-0 text-red-500" />}
                       </button>
                     )) : (
                       <div className="p-4 text-center text-xs font-bold text-slate-400">
-                        メンバーが見つかりません
+                        {responsibleSearch ? '一致するメンバーがいません' : 'メンバーが見つかりません'}
                       </div>
                     )}
                   </div>
@@ -543,15 +572,38 @@ export const TaskItem: React.FC<Props> = ({
                       </button>
                       {isReviewerDropdownOpen && (
                         <>
-                          <div className="fixed inset-0 z-10" onClick={() => setIsReviewerDropdownOpen(false)} />
-                          <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-100 rounded-xl shadow-xl z-20 max-h-48 overflow-y-auto custom-scrollbar">
-                            <button onClick={() => { onUpdateTaskDetails?.(task.id, { reviewer: '' }); setIsReviewerDropdownOpen(false); }} className="w-full text-left px-4 py-2 text-xs font-bold text-slate-400 hover:bg-slate-50">未設定</button>
-                            {members.map((m, i) => (
-                              <button key={i} onClick={() => { onUpdateTaskDetails?.(task.id, { reviewer: m.name }); setIsReviewerDropdownOpen(false); }} className="w-full text-left px-4 py-2 text-xs font-bold text-slate-700 hover:bg-red-50 flex items-center gap-2">
-                                <div className="w-5 h-5 rounded-full bg-slate-100 flex items-center justify-center text-[9px]">{m.name.slice(0, 1)}</div>
-                                {m.name}
-                              </button>
-                            ))}
+                          <div className="fixed inset-0 z-10" onClick={() => { setIsReviewerDropdownOpen(false); setReviewerSearch(''); }} />
+                          <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-100 rounded-xl shadow-xl z-20 overflow-hidden">
+                            <div className="p-2 border-b border-slate-100">
+                              <input
+                                autoFocus
+                                type="text"
+                                placeholder="名前・部門で絞り込み..."
+                                value={reviewerSearch}
+                                onChange={e => setReviewerSearch(e.target.value)}
+                                onClick={e => e.stopPropagation()}
+                                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold outline-none focus:border-red-400"
+                              />
+                            </div>
+                            <div className="max-h-48 overflow-y-auto custom-scrollbar">
+                              <button onClick={() => { onUpdateTaskDetails?.(task.id, { reviewer: '' }); setIsReviewerDropdownOpen(false); setReviewerSearch(''); }} className="w-full text-left px-4 py-2 text-xs font-bold text-slate-400 hover:bg-slate-50">未設定</button>
+                              {members.filter(m =>
+                                !reviewerSearch ||
+                                m.name.toLowerCase().includes(reviewerSearch.toLowerCase()) ||
+                                (m.department || '').toLowerCase().includes(reviewerSearch.toLowerCase())
+                              ).map((m, i) => (
+                                <button key={i} onClick={() => { onUpdateTaskDetails?.(task.id, { reviewer: m.name }); setIsReviewerDropdownOpen(false); setReviewerSearch(''); }} className="w-full text-left px-4 py-2 text-xs font-bold text-slate-700 hover:bg-red-50 flex items-center gap-2">
+                                  <div className="w-5 h-5 rounded-full bg-slate-100 flex items-center justify-center text-[9px] flex-shrink-0">{m.name.slice(0, 1)}</div>
+                                  <div>
+                                    <p>{m.name}</p>
+                                    {m.department && <p className="text-[9px] text-slate-400">{m.department}</p>}
+                                  </div>
+                                </button>
+                              ))}
+                              {members.filter(m => !reviewerSearch || m.name.toLowerCase().includes(reviewerSearch.toLowerCase()) || (m.department || '').toLowerCase().includes(reviewerSearch.toLowerCase())).length === 0 && (
+                                <p className="px-4 py-2 text-xs text-slate-400 font-bold text-center">一致するメンバーがいません</p>
+                              )}
+                            </div>
                           </div>
                         </>
                       )}
@@ -574,23 +626,58 @@ export const TaskItem: React.FC<Props> = ({
                         </button>
                         {isTeamDropdownOpen && (
                           <>
-                            <div className="fixed inset-0 z-10" onClick={() => setIsTeamDropdownOpen(false)} />
-                            <div className="absolute top-full left-0 mt-2 w-48 bg-white border border-slate-100 rounded-xl shadow-xl z-20 max-h-48 overflow-y-auto custom-scrollbar">
-                              {members.filter(m => !task.team?.includes(m.name)).map((m, i) => (
-                                <button key={i} onClick={() => handleAddTeamMember(m.name)} className="w-full text-left px-4 py-2 text-xs font-bold text-slate-700 hover:bg-red-50 flex items-center gap-2">
-                                  <div className="w-5 h-5 rounded-full bg-slate-100 flex items-center justify-center text-[9px]">{m.name.slice(0, 1)}</div>
-                                  {m.name}
-                                </button>
-                              ))}
-                              {members.filter(m => !task.team?.includes(m.name)).length === 0 && (
-                                <div className="px-4 py-2 text-[10px] text-slate-400 font-bold text-center">追加できるメンバーがいません</div>
-                              )}
+                            <div className="fixed inset-0 z-10" onClick={() => { setIsTeamDropdownOpen(false); setTeamSearch(''); }} />
+                            <div className="absolute top-full left-0 mt-2 w-64 bg-white border border-slate-100 rounded-xl shadow-xl z-20 overflow-hidden">
+                              <div className="p-2 border-b border-slate-100">
+                                <input
+                                  autoFocus
+                                  type="text"
+                                  placeholder="名前・部門で絞り込み..."
+                                  value={teamSearch}
+                                  onChange={e => setTeamSearch(e.target.value)}
+                                  onClick={e => e.stopPropagation()}
+                                  className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold outline-none focus:border-red-400"
+                                />
+                              </div>
+                              <div className="max-h-56 overflow-y-auto custom-scrollbar">
+                                {members.filter(m =>
+                                  !task.team?.includes(m.name) && (
+                                    !teamSearch ||
+                                    m.name.toLowerCase().includes(teamSearch.toLowerCase()) ||
+                                    (m.department || '').toLowerCase().includes(teamSearch.toLowerCase())
+                                  )
+                                ).map((m, i) => (
+                                  <button key={i} onClick={() => { handleAddTeamMember(m.name); setTeamSearch(''); }} className="w-full text-left px-4 py-2 text-xs font-bold text-slate-700 hover:bg-red-50 flex items-center gap-2">
+                                    <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-[9px] flex-shrink-0">{m.name.slice(0, 1)}</div>
+                                    <div>
+                                      <p>{m.name}</p>
+                                      {m.department && <p className="text-[9px] text-slate-400">{m.department}</p>}
+                                    </div>
+                                  </button>
+                                ))}
+                                {members.filter(m => !task.team?.includes(m.name) && (!teamSearch || m.name.toLowerCase().includes(teamSearch.toLowerCase()) || (m.department || '').toLowerCase().includes(teamSearch.toLowerCase()))).length === 0 && (
+                                  <div className="px-4 py-3 text-[10px] text-slate-400 font-bold text-center">
+                                    {teamSearch ? '一致するメンバーがいません' : '追加できるメンバーがいません'}
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </>
                         )}
                       </div>
                     </div>
                   </div>
+                </div>
+
+                <div className="bg-slate-50 p-6 rounded-2xl space-y-3">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">内容・説明</label>
+                  <textarea
+                    className="w-full h-24 bg-white border border-slate-200 rounded-xl p-4 text-sm font-bold outline-none focus:border-red-500"
+                    placeholder="タスクの詳細・背景・内容を入力..."
+                    value={localDescription}
+                    onChange={e => setLocalDescription(e.target.value)}
+                    onBlur={() => onUpdateTaskDetails?.(task.id, { description: localDescription })}
+                  />
                 </div>
 
                 <div className="bg-slate-50 p-6 rounded-2xl space-y-3">

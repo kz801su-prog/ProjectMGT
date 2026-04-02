@@ -116,7 +116,7 @@ export interface MemberInfo {
   name: string;
   email: string;
   type: 'internal' | 'external';
-  role: 'admin' | 'manager' | 'user';
+  role: 'admin' | 'manager' | 'user' | 'executive';
   department?: string; // 部門
   isLeader?: boolean;  // プロジェクトリーダー
 }

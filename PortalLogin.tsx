@@ -17,7 +17,7 @@ const PortalLogin: React.FC<PortalLoginProps> = ({ onLogin }) => {
         const users = getPortalUsers();
         return users.length === 0;
     });
-    const [setupRole, setSetupRole] = useState<'admin' | 'manager' | 'user'>('admin');
+    const [setupRole, setSetupRole] = useState<'admin' | 'manager' | 'user' | 'executive'>('admin');
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -187,7 +187,7 @@ const PortalLogin: React.FC<PortalLoginProps> = ({ onLogin }) => {
                                 </label>
                                 <select
                                     value={setupRole}
-                                    onChange={e => setSetupRole(e.target.value as 'admin' | 'manager' | 'user')}
+                                    onChange={e => setSetupRole(e.target.value as 'admin' | 'manager' | 'user' | 'executive')}
                                     className="w-full p-4 rounded-2xl text-sm font-bold text-white outline-none appearance-none cursor-pointer"
                                     style={{
                                         background: 'rgba(255,255,255,0.06)',
@@ -195,8 +195,9 @@ const PortalLogin: React.FC<PortalLoginProps> = ({ onLogin }) => {
                                     }}
                                 >
                                     <option value="admin" style={{ background: '#1e293b' }}>👑 Admin（管理者）</option>
-                                    <option value="manager" style={{ background: '#1e293b' }}>📋 Manager</option>
-                                    <option value="user" style={{ background: '#1e293b' }}>👤 User</option>
+                                    <option value="executive" style={{ background: '#1e293b' }}>🏢 Executive（役員）</option>
+                                    <option value="manager" style={{ background: '#1e293b' }}>📋 Manager（部門長）</option>
+                                    <option value="user" style={{ background: '#1e293b' }}>👤 User（一般）</option>
                                 </select>
                             </div>
                         )}

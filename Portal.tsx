@@ -3,7 +3,7 @@ import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import {
     Plus, Settings, LogOut, Search, Shield, BarChart3, LayoutGrid,
     FolderPlus, X, Sparkles, Briefcase, Pin, Clock, Filter, ChevronDown,
-    Upload, FileSpreadsheet, Target, CheckCircle2, AlertCircle
+    Upload, FileSpreadsheet, Target, CheckCircle2, AlertCircle, Building2
 } from 'lucide-react';
 import { PortalUser, ProjectMeta, GoalEpic, PROJECT_COLORS, PROJECT_ICONS, getCurrentHalfYear, getProjectPeriodLabel, getFiscalYearOptions } from './portalTypes';
 import { getProjects, saveProjects, sortProjects, addProject as addProjectToStore, updateProject as updateProjectInStore, deleteProject as deleteProjectFromStore, saveProjectEpics } from './projectDataService';
@@ -12,6 +12,7 @@ import { DEFAULT_GAS_URL } from './constants';
 import ProjectCard from './components/ProjectCard';
 import BenchmarkView from './components/BenchmarkView';
 import PortalSettings from './components/PortalSettings';
+import ExecutiveDashboard from './components/ExecutiveDashboard';
 import { parseGoalFile, convertToProjects, ParsedGoalProject } from './goalFileParser';
 
 interface PortalProps {
@@ -46,7 +47,9 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
     });
 
     const [gasUrl, setGasUrl] = useState(() => localStorage.getItem('board_gas_url') || DEFAULT_GAS_URL);
-    const [viewMode, setViewMode] = useState<'projects' | 'benchmark'>('projects');
+    const [viewMode, setViewMode] = useState<'projects' | 'benchmark' | 'executive'>(() =>
+        (user.role === 'executive') ? 'executive' : 'projects'
+    );
     const [searchTerm, setSearchTerm] = useState('');
     const [showNewProjectModal, setShowNewProjectModal] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
@@ -83,6 +86,7 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
 
     const isAdmin = user.role === 'admin';
     const isManager = user.role === 'manager';
+    const isExecutive = user.role === 'executive';
 
     // フィルタリングされたプロジェクト一覧
     const filteredProjects = useMemo(() => {
@@ -315,10 +319,18 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
                         </div>
 
                         <div className="flex items-center gap-2 px-3 py-2 rounded-xl"
-                            style={{ background: user.role === 'admin' ? 'rgba(251,191,36,0.1)' : 'rgba(255,255,255,0.04)' }}
+                            style={{
+                                background: user.role === 'admin'
+                                    ? 'rgba(251,191,36,0.1)'
+                                    : user.role === 'executive'
+                                        ? 'rgba(139,92,246,0.1)'
+                                        : user.role === 'manager'
+                                            ? 'rgba(59,130,246,0.1)'
+                                            : 'rgba(255,255,255,0.04)'
+                            }}
                         >
                             <span className="text-xs">
-                                {user.role === 'admin' ? '👑' : user.role === 'manager' ? '📋' : '👤'}
+                                {user.role === 'admin' ? '👑' : user.role === 'executive' ? '🏢' : user.role === 'manager' ? '📋' : '👤'}
                             </span>
                             <span className="text-xs font-bold text-white">{user.name}</span>
                         </div>
@@ -349,12 +361,14 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
                 {/* ヒーローセクション */}
                 <div className="mb-10">
                     <h2 className="text-3xl md:text-4xl font-black text-white mb-2">
-                        {viewMode === 'projects' ? 'プロジェクト' : 'ベンチマーク'}
+                        {viewMode === 'projects' ? 'プロジェクト' : viewMode === 'executive' ? '役員ダッシュボード' : 'ベンチマーク'}
                     </h2>
                     <p className="text-sm text-slate-500 font-bold">
                         {viewMode === 'projects'
                             ? `${projects.length}件のプロジェクトを管理中${hasActiveFilters ? ` (${filteredProjects.length}件表示中)` : ''}`
-                            : '全プロジェクト横断の個人ポイントランキング'
+                            : viewMode === 'executive'
+                                ? '部署別・期別の進捗状況とエピック評価一覧'
+                                : '全プロジェクト横断の個人ポイントランキング'
                         }
                     </p>
                 </div>
@@ -379,6 +393,16 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
                                 >
                                     <BarChart3 className="w-4 h-4" /> ベンチマーク
                                 </button>
+                                {(isExecutive || isAdmin) && (
+                                    <button
+                                        onClick={() => setViewMode('executive')}
+                                        className={`px-4 py-2.5 rounded-lg text-xs font-black flex items-center gap-2 transition-all ${viewMode === 'executive' ? 'shadow text-white' : 'text-slate-500 hover:text-slate-300'
+                                            }`}
+                                        style={viewMode === 'executive' ? { background: 'rgba(139,92,246,0.3)' } : {}}
+                                    >
+                                        <Building2 className="w-4 h-4" /> 役員ダッシュボード
+                                    </button>
+                                )}
                             </div>
                         </div>
 
@@ -604,6 +628,11 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
                 {/* ベンチマーク */}
                 {viewMode === 'benchmark' && (
                     <BenchmarkView projects={projects} />
+                )}
+
+                {/* 役員ダッシュボード */}
+                {viewMode === 'executive' && (
+                    <ExecutiveDashboard projects={projects} />
                 )}
             </div>
 
