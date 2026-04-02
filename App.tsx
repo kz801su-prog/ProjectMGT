@@ -133,17 +133,12 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
   const [epics, setEpics] = useState<string[]>(() => {
     if (projectId) {
       const proj = getProjectsMeta().find(p => p.id === projectId);
-      const goalEpicNames = proj?.goalEpics?.length ? proj.goalEpics.map(e => e.name) : null;
-      // 1) goalEpicsがあるプロジェクト: 保存済みエピックとgoalEpicsを比較し整合性チェック
-      const projectEpics = getProjectEpics(projectId);
-      if (goalEpicNames) {
-        // goalEpicsのいずれかが保存済みリストに含まれていれば保存済みを優先（ユーザー編集済み）
-        const hasOverlap = projectEpics.some(e => goalEpicNames.includes(e));
-        if (hasOverlap && projectEpics.length > 0) return projectEpics;
-        // 保存済みリストがgoalEpicsと無関係（DEFAULT_PROJECTS等）ならgoalEpicsを使用
-        return goalEpicNames;
+      // goalEpicsがあるプロジェクト: 常にgoalEpicsを最優先で使用
+      if (proj?.goalEpics?.length) {
+        return proj.goalEpics.map(e => e.name);
       }
-      // 2) goalEpicsがない場合は保存済みエピックを使用
+      // goalEpicsがない場合は保存済みエピックを使用
+      const projectEpics = getProjectEpics(projectId);
       if (projectEpics.length > 0) return projectEpics;
     }
     const saved = localStorage.getItem('board_epics');
@@ -326,20 +321,20 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
     }
   }, [members, projectId]);
 
+  // goalEpicsがあるプロジェクト: currentProjectMetaが確定したら必ずgoalEpicsで上書き
+  useEffect(() => {
+    if (currentProjectMeta?.goalEpics?.length) {
+      setEpics(currentProjectMeta.goalEpics.map(e => e.name));
+    }
+  }, [currentProjectMeta]);
+
   useEffect(() => {
     if (projectId) {
-      // goalEpicsがあるプロジェクトで、epicsがgoalEpicsと無関係なデフォルト値の場合は保存しない
-      const meta = currentProjectMeta;
-      if (meta?.goalEpics?.length) {
-        const goalNames = meta.goalEpics.map(e => e.name);
-        const hasOverlap = epics.some(e => goalNames.includes(e));
-        if (!hasOverlap) return; // goalEpicsと無関係なepicsを上書き保存しない
-      }
       saveProjectEpics(projectId, epics);
     } else {
       localStorage.setItem('board_epics', JSON.stringify(epics));
     }
-  }, [epics, projectId, currentProjectMeta]);
+  }, [epics, projectId]);
 
   useEffect(() => {
     localStorage.setItem('board_project_concept', JSON.stringify(projectConcept));
