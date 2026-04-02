@@ -4,7 +4,7 @@ import {
   CloudUpload, BrainCircuit, X, LayoutGrid, Loader2,
   Armchair, ShieldCheck, Users, Trash2, UserPlus, Lock, CheckCircle, AlertTriangle, LogOut, Link as LinkIcon, Activity,
   FileCode, Copy, Check, Award, Briefcase, Edit2, Bell, Star, TrendingUp, Target, CheckCircle2,
-  ArrowLeft, Download, Upload
+  ArrowLeft, Download, Upload, Crown, Filter
 } from 'lucide-react';
 import { Task, TaskStatus, TaskPriority, MemberInfo, TaskComment, ProjectConcept, Attachment } from './types';
 import { fetchTasksFromSheet, syncAllTasksToSheet, saveSingleTaskToSheet, saveProjectConceptToSheet, saveEpicsToSheet } from './mysqlService';
@@ -164,10 +164,13 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
   const [editingEpicIdx, setEditingEpicIdx] = useState<number | null>(null);
   const [editingEpicName, setEditingEpicName] = useState('');
   const [newMemberName, setNewMemberName] = useState('');
+  const [newMemberDept, setNewMemberDept] = useState('');
   const [editingMemberIdx, setEditingMemberIdx] = useState<number | null>(null);
   const [editingMemberName, setEditingMemberName] = useState('');
   const [newMemberRole, setNewMemberRole] = useState<'admin' | 'user'>('user');
   const [editingMemberRole, setEditingMemberRole] = useState<'admin' | 'user'>('user');
+  const [memberDeptFilter, setMemberDeptFilter] = useState<string>('all');
+  const csvMemberInputRef = useRef<HTMLInputElement>(null);
 
   const [projectConcept, setProjectConcept] = useState<ProjectConcept>(() => {
     const saved = localStorage.getItem('board_project_concept');
@@ -895,6 +898,7 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
           <EpicListView
             tasks={tasks.filter(t => !t.isSoftDeleted)}
             epics={epics}
+            goalEpics={currentProjectMeta?.goalEpics ?? []}
             onEpicClick={(name) => { setEpicFilter(name); setShowEpicList(false); }}
             onClose={() => setShowEpicList(false)}
           />
@@ -1135,50 +1139,153 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
                     </div>
                   </div>
                 )}
-                {settingsTab === 'members' && isAdmin && (
-                  <div className="space-y-4">
-                    <div className="flex justify-between items-center">
+                {settingsTab === 'members' && isAdmin && (() => {
+                  // 部門リスト（登録済みメンバーから収集）
+                  const allDepts = Array.from(new Set(members.map(m => m.department).filter(Boolean))) as string[];
+                  const filteredMembers = memberDeptFilter === 'all' ? members : members.filter(m => m.department === memberDeptFilter);
+
+                  // CSV解析: "部門,氏名" or "氏名,部門" or "部門,役職,氏名" 等に対応
+                  const parseCsvMembers = (text: string): MemberInfo[] => {
+                    const lines = text.split(/\r?\n/).filter(l => l.trim());
+                    if (lines.length === 0) return [];
+                    const results: MemberInfo[] = [];
+                    // ヘッダー行の列を検出
+                    const header = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+                    const deptIdx = header.findIndex(h => h.includes('部門') || h.includes('部署') || h.includes('department'));
+                    const nameIdx = header.findIndex(h => h.includes('氏名') || h.includes('名前') || h.includes('name') || h.includes('社員'));
+                    if (nameIdx < 0) return []; // 名前列が見つからない場合はスキップ
+                    const dataStart = (deptIdx >= 0 || nameIdx >= 0) ? 1 : 0; // ヘッダーがあれば1行目からデータ
+                    for (let i = dataStart; i < lines.length; i++) {
+                      const cols = lines[i].split(',').map(c => c.trim().replace(/"/g, ''));
+                      const name = cols[nameIdx]?.trim();
+                      const dept = deptIdx >= 0 ? cols[deptIdx]?.trim() : '';
+                      if (name) results.push({ name, email: '', type: 'internal', role: 'user', department: dept || undefined });
+                    }
+                    return results;
+                  };
+
+                  return (
+                  <div className="space-y-5">
+                    <div className="flex flex-wrap justify-between items-center gap-3">
                       <h3 className="font-black text-sm flex items-center gap-2 uppercase tracking-wider text-red-600"><Users className="w-4 h-4" /> 評価対象メンバー名簿</h3>
-                      <div className="flex items-center gap-2">
-                        <input type="text" value={newMemberName} onChange={e => setNewMemberName(e.target.value)} placeholder="新しいメンバー名" className="p-2 border border-slate-200 rounded-lg text-xs outline-none focus:border-red-500" />
-                        <button onClick={() => {
-                          if (newMemberName) {
-                            setMembers(prev => [...prev, { name: newMemberName, email: '', type: 'internal', role: 'user' }]);
-                            setNewMemberName('');
-                          }
-                        }} className="text-[10px] font-black bg-red-50 text-red-600 px-4 py-2 rounded-lg hover:bg-red-100 transition-all flex items-center gap-1">
-                          <UserPlus className="w-3 h-3" /> 追加
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {/* CSVアップロード */}
+                        <input ref={csvMemberInputRef} type="file" accept=".csv,.txt" className="hidden" onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          const reader = new FileReader();
+                          reader.onload = (ev) => {
+                            const text = ev.target?.result as string;
+                            const parsed = parseCsvMembers(text);
+                            if (parsed.length === 0) { alert('CSVから名前を読み取れませんでした。\n列に「氏名」または「name」を含めてください。'); return; }
+                            if (confirm(`${parsed.length}名を追加しますか？\n（既存メンバーと重複する名前はスキップします）`)) {
+                              setMembers(prev => {
+                                const existing = new Set(prev.map(m => m.name));
+                                const newOnes = parsed.filter(m => !existing.has(m.name));
+                                return [...prev, ...newOnes];
+                              });
+                            }
+                            if (csvMemberInputRef.current) csvMemberInputRef.current.value = '';
+                          };
+                          reader.readAsText(file, 'UTF-8');
+                        }} />
+                        <button onClick={() => csvMemberInputRef.current?.click()} className="text-[10px] font-black bg-blue-50 text-blue-600 px-4 py-2 rounded-lg hover:bg-blue-100 transition-all flex items-center gap-1">
+                          <Upload className="w-3 h-3" /> CSV名簿読込
+                        </button>
+                        <button onClick={() => setMembers([])} className="text-[10px] font-black bg-rose-50 text-rose-500 px-3 py-2 rounded-lg hover:bg-rose-100 transition-all">
+                          全削除
                         </button>
                       </div>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {members.map((m, idx) => (
-                        <div key={`${m.name}-${idx}`} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100 group">
-                          <span className="text-xs font-bold text-slate-700">{m.name}</span>
-                          <div className="flex items-center gap-2">
-                            <select
-                              value={m.role}
-                              onChange={(e) => {
-                                const newRole = e.target.value as 'admin' | 'user';
-                                setMembers(prev => prev.map((mem, i) => i === idx ? { ...mem, role: newRole } : mem));
-                              }}
-                              className="text-[10px] font-black bg-white border border-slate-200 rounded-lg p-1 outline-none focus:border-red-500"
-                            >
-                              <option value="user">User</option>
-                              <option value="manager">Manager</option>
-                              <option value="admin">Admin</option>
-                            </select>
-                            <button onClick={() => {
-                              setMembers(prev => prev.filter((_, i) => i !== idx));
-                            }} className="p-1.5 text-rose-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all">
-                              <Trash2 className="w-4 h-4" />
-                            </button>
+
+                    {/* CSVフォーマットヒント */}
+                    <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-[10px] text-blue-700 font-bold">
+                      📄 CSVフォーマット: 1行目にヘッダー「部門,氏名」「部署,名前」等を記載してください。Excelで「CSV(UTF-8)」として保存したファイルが使えます。
+                    </div>
+
+                    {/* 手動追加 */}
+                    <div className="flex items-center gap-2 flex-wrap border border-slate-100 bg-slate-50 rounded-xl p-3">
+                      <span className="text-[10px] font-black text-slate-500">手動追加:</span>
+                      <input type="text" value={newMemberDept} onChange={e => setNewMemberDept(e.target.value)} placeholder="部門（任意）" className="p-2 border border-slate-200 rounded-lg text-xs outline-none focus:border-red-500 w-28" />
+                      <input type="text" value={newMemberName} onChange={e => setNewMemberName(e.target.value)} placeholder="氏名" className="p-2 border border-slate-200 rounded-lg text-xs outline-none focus:border-red-500 w-32" onKeyDown={e => { if (e.key === 'Enter' && newMemberName) { setMembers(prev => [...prev, { name: newMemberName, email: '', type: 'internal', role: 'user', department: newMemberDept || undefined }]); setNewMemberName(''); setNewMemberDept(''); }}} />
+                      <button onClick={() => {
+                        if (newMemberName) {
+                          setMembers(prev => [...prev, { name: newMemberName, email: '', type: 'internal', role: 'user', department: newMemberDept || undefined }]);
+                          setNewMemberName(''); setNewMemberDept('');
+                        }
+                      }} className="text-[10px] font-black bg-red-50 text-red-600 px-4 py-2 rounded-lg hover:bg-red-100 transition-all flex items-center gap-1">
+                        <UserPlus className="w-3 h-3" /> 追加
+                      </button>
+                    </div>
+
+                    {/* 部門フィルター */}
+                    {allDepts.length > 0 && (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Filter className="w-3.5 h-3.5 text-slate-400" />
+                        <button onClick={() => setMemberDeptFilter('all')} className={`text-[10px] font-black px-3 py-1.5 rounded-full transition-all ${memberDeptFilter === 'all' ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>全部門</button>
+                        {allDepts.map(dept => (
+                          <button key={dept} onClick={() => setMemberDeptFilter(dept)} className={`text-[10px] font-black px-3 py-1.5 rounded-full transition-all ${memberDeptFilter === dept ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{dept}</button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* メンバー一覧 */}
+                    <div className="space-y-2">
+                      <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
+                        {filteredMembers.length}名 {memberDeptFilter !== 'all' ? `(${memberDeptFilter})` : `/ 合計${members.length}名`}
+                      </div>
+                      <div className="grid grid-cols-1 gap-2">
+                        {filteredMembers.map((m) => {
+                          const realIdx = members.indexOf(m);
+                          return (
+                          <div key={`${m.name}-${realIdx}`} className={`flex items-center justify-between p-3 rounded-xl border group transition-all ${m.isLeader ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-100'}`}>
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${m.isLeader ? 'bg-amber-400 text-white' : 'bg-slate-200 text-slate-500'}`}>
+                                {m.isLeader ? <Crown className="w-4 h-4" /> : <span className="text-[10px] font-black">{m.name[0]}</span>}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-black text-slate-700 truncate">{m.name}</span>
+                                  {m.isLeader && <span className="text-[9px] font-black text-amber-600 bg-amber-100 px-2 py-0.5 rounded-full">リーダー</span>}
+                                </div>
+                                {m.department && <span className="text-[10px] text-slate-400 font-bold">{m.department}</span>}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              {/* リーダートグル */}
+                              <button
+                                onClick={() => setMembers(prev => prev.map((mem, i) => i === realIdx ? { ...mem, isLeader: !mem.isLeader } : mem))}
+                                title={m.isLeader ? 'リーダー解除' : 'リーダーに設定'}
+                                className={`p-1.5 rounded-lg transition-all ${m.isLeader ? 'text-amber-500 bg-amber-100 hover:bg-amber-200' : 'text-slate-300 hover:text-amber-500 hover:bg-amber-50'}`}
+                              >
+                                <Crown className="w-4 h-4" />
+                              </button>
+                              <select
+                                value={m.role}
+                                onChange={(e) => {
+                                  const newRole = e.target.value as 'admin' | 'manager' | 'user';
+                                  setMembers(prev => prev.map((mem, i) => i === realIdx ? { ...mem, role: newRole } : mem));
+                                }}
+                                className="text-[10px] font-black bg-white border border-slate-200 rounded-lg p-1 outline-none focus:border-red-500"
+                              >
+                                <option value="user">User</option>
+                                <option value="manager">Manager</option>
+                                <option value="admin">Admin</option>
+                              </select>
+                              <button onClick={() => {
+                                setMembers(prev => prev.filter((_, i) => i !== realIdx));
+                              }} className="p-1.5 text-rose-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all">
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                          );
+                        })}
+                      </div>
                     </div>
                   </div>
-                )}
+                  );
+                })()}
                 {settingsTab === 'maintenance' && isAdmin && (
                   <div className="space-y-6">
                     <div className="p-6 bg-slate-50 border border-slate-100 rounded-[2rem] space-y-4">
