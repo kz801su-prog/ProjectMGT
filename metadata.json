@@ -1,0 +1,7 @@
+{
+  "name": "Sincol Leather2027",
+  "description": "Sincol Leather 2027 タスクおよびエピックの工程管理。進捗状況の可視化とAIによるサポート機能を提供します。",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}

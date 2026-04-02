@@ -1,0 +1,76 @@
+# マルチプロジェクト対応 実装計画
+
+## 概要
+
+既存の単一プロジェクト管理ツールを拡張し、**新しいトップページ（ポータル）**から複数プロジェクトを作成・管理・同時進行できるようにする。
+
+## アーキテクチャ
+
+```mermaid
+graph TD
+    A[トップページ ポータル] -->|Admin/Manager/User| B[プロジェクト一覧]
+    B --> C[プロジェクトA]
+    B --> D[プロジェクトB]
+    B --> E[プロジェクトC]
+    C --> F[既存App.tsx タスク管理]
+    D --> F
+    E --> F
+    A --> G[ベンチマーク ダッシュボード]
+    A --> H[ポータル設定 Admin専用]
+```
+
+## 要件まとめ
+
+| # | 要件 | 詳細 |
+|---|------|------|
+| 1 | 新トップページ | ポータルとして、複数プロジェクトを一覧表示 |
+| 2 | ２段階ログイン | トップページ用ログイン + 各プロジェクト用ログイン |
+| 3 | Manager ロール追加 | Admin/Manager/User の3ロール。ManagerはGAS/Webhook/API設定不可 |
+| 4 | プロジェクトデータ分離 | プログラム共有、データのみプロジェクト別 |
+| 5 | ピン止め＋ソート | ピン止めプロジェクトと新しいプロジェクトが上位 |
+| 6 | 個人ポイント計算 | 個人点数 × プロジェクト評価(%) = 最終ポイント |
+| 7 | ベンチマーク | 全プロジェクト横断で個人ポイントを集計・ランキング |
+| 8 | 半期評価 | プロジェクトは半期(4月~9月, 10月~3月)ごとに評価 |
+
+## ファイル構成（新規追加・変更）
+
+```
+ProjectMGT統合/
+├── index.tsx              # ← ルーティング追加
+├── App.tsx                # ← 既存（プロジェクト内ページ、projectIdを受け取るよう変更）
+├── Portal.tsx             # ★ 新規: トップページ（ポータル）
+├── PortalLogin.tsx        # ★ 新規: ポータルログイン画面
+├── types.ts               # ← Manager ロール追加、ProjectMeta型追加
+├── constants.ts           # ← ポータル用定数追加
+├── portalTypes.ts         # ★ 新規: ポータル用型定義
+├── projectDataService.ts  # ★ 新規: プロジェクト別データ管理
+├── components/
+│   ├── ProjectCard.tsx    # ★ 新規: プロジェクトカード
+│   ├── BenchmarkView.tsx  # ★ 新規: ベンチマークダッシュボード
+│   ├── PortalSettings.tsx # ★ 新規: ポータル設定（Admin専用）
+│   └── ... (既存コンポーネント)
+```
+
+## 実装ステップ
+
+### Phase 1: 型定義とデータ構造
+1. `portalTypes.ts` - ProjectMeta, PortalUser, PersonalScore 等の型定義
+2. [types.ts](file:///c:/Users/sinco/.gemini/antigravity/scratch/ProjectMGT%E7%B5%B1%E5%90%88/types.ts) - MemberInfo.role に 'manager' 追加
+3. `projectDataService.ts` - localStorage ベースのプロジェクトデータ管理
+
+### Phase 2: ポータル画面
+4. `PortalLogin.tsx` - ポータル用ログイン画面
+5. `Portal.tsx` - メインポータル画面
+6. `components/ProjectCard.tsx` - プロジェクトカード（ピン止め対応）
+7. `components/BenchmarkView.tsx` - ベンチマークダッシュボード
+8. `components/PortalSettings.tsx` - ポータル設定（Admin専用）
+
+### Phase 3: 既存Appの統合
+9. [App.tsx](file:///c:/Users/sinco/.gemini/antigravity/scratch/ProjectMGT%E7%B5%B1%E5%90%88/App.tsx) - projectId を受け取り、データをプロジェクト別に分離
+10. [index.tsx](file:///c:/Users/sinco/.gemini/antigravity/scratch/ProjectMGT%E7%B5%B1%E5%90%88/index.tsx) - ルーティング（ポータル ↔ プロジェクト画面の切り替え）
+11. Manager ロール制限（設定画面のGAS/Webhook/API非表示）
+
+### Phase 4: 評価システム
+12. プロジェクト評価（Admin専用、半期制）
+13. 個人ポイント計算（60点 × 80% = 48ポイント）
+14. ベンチマークダッシュボードの完成

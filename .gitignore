@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+build_debug.txt
+build_mem.txt
+build_output.txt
+build_result.txt
+build_rollup.txt
+ts_errors.log
+project_backup.zip
+src_test.tsx
+new_App.tsx
+scratchpad_ke9i61r3.md
+.vscode/
