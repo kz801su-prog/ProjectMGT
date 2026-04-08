@@ -4,17 +4,19 @@ import {
   CloudUpload, BrainCircuit, X, LayoutGrid, Loader2,
   Armchair, ShieldCheck, Users, Trash2, UserPlus, Lock, CheckCircle, AlertTriangle, LogOut, Link as LinkIcon, Activity,
   FileCode, Copy, Check, Award, Briefcase, Edit2, Bell, Star, TrendingUp, Target, CheckCircle2,
-  ArrowLeft, Download, Upload, Crown, Filter
+  ArrowLeft, Download, Upload, Crown, Filter, Clock
 } from 'lucide-react';
 import { Task, TaskStatus, TaskPriority, MemberInfo, TaskComment, ProjectConcept, Attachment } from './types';
 import { fetchTasksFromSheet, syncAllTasksToSheet, saveSingleTaskToSheet, saveProjectConceptToSheet, saveEpicsToSheet, saveGoalEpicsToSql } from './mysqlService';
 import { analyzeProgress } from './geminiService';
 import { DashboardCards } from './components/DashboardCards';
 import { TaskItem } from './components/TaskItem';
+import ProjectSearch from './components/ProjectSearch';
 import { TimelineView } from './components/TimelineView';
 import { MatrixView } from './components/MatrixView';
 import { EvaluationView } from './components/EvaluationView';
 import { EpicListView } from './components/EpicListView';
+import { ActivityHistoryModal } from './components/ActivityHistoryModal';
 import { DEFAULT_GAS_URL, INITIAL_TASKS, DEFAULT_CLIQ_URL, MEMBERS as INITIAL_MEMBERS, ADMIN_USER_NAME, SHEET_GID, DEFAULT_PROJECTS } from './constants';
 import { PortalUser, getProjectPeriodLabel, GoalEpic } from './portalTypes';
 import { getProjectGasUrl, saveProjectGasUrl, getProjectCliqUrl, saveProjectCliqUrl, getProjectPassword, saveProjectPassword, getProjects as getProjectsMeta, getProjectEpics, saveProjectEpics, getProjectMembers, saveProjectMembers, updateProject as updateProjectInStore } from './projectDataService';
@@ -47,10 +49,21 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
   const [isInitialLoadDone, setIsInitialLoadDone] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'timeline' | 'matrix' | 'evaluation'>('list');
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showActivityModal, setShowActivityModal] = useState(false);
   const [showManagerSettingsModal, setShowManagerSettingsModal] = useState(false);
   const [managerSettingsTab, setManagerSettingsTab] = useState<'evaluation' | 'results' | 'members' | 'epics' | 'score'>('evaluation');
+  const [showEvaluatorModal, setShowEvaluatorModal] = useState(false);
+  const [evaluatorTab, setEvaluatorTab] = useState<'evaluation' | 'results' | 'epics' | 'score'>('evaluation');
+  const [showSearch, setShowSearch] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<'general' | 'concept' | 'notifications' | 'members' | 'evaluation' | 'evaluation_tasks' | 'epics' | 'maintenance' | 'dept_evaluation'>('general');
+  const [settingsTab, setSettingsTab] = useState<'general' | 'concept' | 'notifications' | 'members' | 'evaluation' | 'evaluation_tasks' | 'epics' | 'maintenance' | 'dept_evaluation' | 'scores'>('general');
+  const [localProjectScore, setLocalProjectScore] = useState<number>(() => {
+    if (projectId) {
+      const proj = getProjectsMeta().find(p => p.id === projectId);
+      return proj?.projectScore ?? 0;
+    }
+    return 0;
+  });
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [initialTaskTab, setInitialTaskTab] = useState<'basic' | 'chat' | 'files' | 'hierarchy'>('basic');
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
@@ -138,6 +151,12 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
     return member?.role === 'executive';
   }, [settings.userName, portalUser, members]);
 
+  // 評価者: Manager/Admin は常に評価者。Adminが isEvaluator フラグをつけたメンバーも評価者
+  const isEvaluatorUser = useMemo(() => {
+    if (isAdmin || isManager) return true;
+    return members?.find(m => m.name === settings.userName)?.isEvaluator === true;
+  }, [isAdmin, isManager, members, settings.userName]);
+
   // Manager の担当部門: portalUser.department → メンバーリストのdepartment の順で取得
   const managerDepartment = useMemo(() => {
     if (!isManager) return null;
@@ -189,6 +208,8 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
   const [editingEpicName, setEditingEpicName] = useState('');
   const [newMemberName, setNewMemberName] = useState('');
   const [newMemberDept, setNewMemberDept] = useState('');
+  const [newMemberBusinessUnit, setNewMemberBusinessUnit] = useState('');
+  const [newMemberId, setNewMemberId] = useState('');
   const [editingMemberIdx, setEditingMemberIdx] = useState<number | null>(null);
   const [editingMemberName, setEditingMemberName] = useState('');
   const [newMemberRole, setNewMemberRole] = useState<'admin' | 'manager' | 'user' | 'executive'>('user');
@@ -794,8 +815,14 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
               <button onClick={() => setViewMode('list')} className={`p-2 rounded-lg ${viewMode === 'list' ? 'bg-white shadow text-red-600' : 'text-slate-400'}`}><List className="w-5 h-5" /></button>
               <button onClick={() => setViewMode('timeline')} className={`p-2 rounded-lg ${viewMode === 'timeline' ? 'bg-white shadow text-red-600' : 'text-slate-400'}`}><Calendar className="w-5 h-5" /></button>
               <button onClick={() => setViewMode('matrix')} className={`p-2 rounded-lg ${viewMode === 'matrix' ? 'bg-white shadow text-red-600' : 'text-slate-400'}`}><LayoutGrid className="w-5 h-5" /></button>
-              {(isAdmin || isManager) && <button onClick={() => setViewMode('evaluation')} className={`p-2 rounded-lg ${viewMode === 'evaluation' ? 'bg-white shadow text-red-600' : 'text-slate-400'}`}><Award className="w-5 h-5" /></button>}
+              {(isAdmin || isManager) && <button onClick={() => setViewMode('evaluation')} className={`p-2 rounded-lg ${viewMode === 'evaluation' ? 'bg-white shadow text-red-600' : 'text-slate-400'}`} title="評価"><Award className="w-5 h-5" /></button>}
+              <button onClick={() => setShowActivityModal(true)} className={`p-2 rounded-lg text-slate-400 hover:text-slate-700`} title="更新履歴"><Clock className="w-5 h-5" /></button>
             </div>
+
+            {/* 全文検索ボタン */}
+            <button onClick={() => setShowSearch(true)} className="p-3 bg-white border border-slate-200 rounded-xl text-slate-500 hover:text-red-600 shadow-sm transition-all" title="全文検索">
+              <Search className="w-5 h-5" />
+            </button>
 
             <button onClick={handleAiAnalyze} className="p-3 bg-white border border-red-100 text-red-500 rounded-xl hover:bg-red-50 shadow-sm transition-all" title="AI分析">
               {isAiAnalyzing ? <Loader2 className="w-5 h-5 animate-spin" /> : <BrainCircuit className="w-5 h-5" />}
@@ -812,7 +839,13 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
                 <Settings className="w-5 h-5" />
               </button>
             )}
-            {(isAdmin || (!isManager && !isExecutive)) && (
+            {/* 評価者（Manager/Adminではないが isEvaluator フラグがある人）専用ボタン */}
+            {isEvaluatorUser && !isManager && !isAdmin && (
+              <button onClick={() => setShowEvaluatorModal(true)} className="p-3 bg-orange-50 border border-orange-200 rounded-xl text-orange-500 hover:bg-orange-100 transition-all" title="評価入力">
+                <Award className="w-5 h-5" />
+              </button>
+            )}
+            {(isAdmin || (!isEvaluatorUser)) && (
               <button onClick={() => setShowSettingsModal(true)} className="p-3 bg-white border border-slate-200 rounded-xl text-slate-400 hover:text-red-600 transition-all" title="設定">
                 <Settings className="w-5 h-5" />
               </button>
@@ -918,6 +951,7 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
                     members={members}
                     epics={epics}
                     allTasks={tasks}
+                    projectDepartment={currentProjectMeta?.department}
                   />
                 ))
               )}
@@ -976,6 +1010,123 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
             onEpicClick={(name) => { setEpicFilter(name); setShowEpicList(false); }}
             onClose={() => setShowEpicList(false)}
           />
+        )}
+
+        {/* ======= 全文検索モーダル ======= */}
+        {showSearch && (
+          <ProjectSearch
+            tasks={tasks}
+            onOpenTask={(taskId, tab) => {
+              setViewMode('list');
+              setEpicFilter(null);
+              setExpandedTaskId(null);
+              setTimeout(() => {
+                setExpandedTaskId(taskId);
+                setInitialTaskTab(tab);
+              }, 50);
+            }}
+            onClose={() => setShowSearch(false)}
+          />
+        )}
+
+        {/* ======= 評価者専用モーダル (非Manager/非Admin の isEvaluator ユーザー) ======= */}
+        {showEvaluatorModal && isEvaluatorUser && !isManager && !isAdmin && (
+          <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4">
+            <div className="bg-white rounded-[2.5rem] w-full max-w-4xl shadow-2xl overflow-hidden animate-in zoom-in duration-200 max-h-[90vh] flex flex-col">
+              <div className="p-6 border-b flex justify-between items-center bg-orange-50/50 flex-shrink-0">
+                <h2 className="font-black text-xl flex items-center gap-3 text-orange-800"><Award className="w-6 h-6 text-orange-600" /> 評価入力</h2>
+                <div className="flex items-center gap-3">
+                  <div className="px-3 py-1 rounded-full text-[10px] font-black bg-orange-100 text-orange-700">
+                    📊 評価者: {settings.userName}
+                  </div>
+                  <button onClick={() => setShowEvaluatorModal(false)} className="p-2 hover:bg-slate-200 rounded-full"><X className="w-5 h-5" /></button>
+                </div>
+              </div>
+              <div className="bg-orange-50/30 border-b p-2 flex flex-wrap gap-1 flex-shrink-0">
+                {([['evaluation','評価入力'],['results','評価結果'],['epics','エピック'],['score','総合評価']] as [typeof evaluatorTab, string][]).map(([tab, label]) => (
+                  <button key={tab} onClick={() => setEvaluatorTab(tab)} className={`py-2 px-4 text-[10px] font-black uppercase tracking-widest transition-all rounded-lg ${evaluatorTab === tab ? 'bg-orange-600 text-white shadow-sm' : 'text-slate-400 hover:text-orange-600'}`}>{label}</button>
+                ))}
+              </div>
+              <div className="p-6 overflow-y-auto flex-1 custom-scrollbar">
+                {evaluatorTab === 'evaluation' && (
+                  <div className="space-y-4">
+                    <h3 className="font-black text-sm flex items-center gap-2 text-orange-700"><Target className="w-4 h-4" /> タスク評価入力</h3>
+                    <div className="space-y-4">
+                      {tasks.filter(t => !t.isSoftDeleted && t.status === TaskStatus.COMPLETED).map(task => (
+                        <div key={task.id} className="p-4 bg-white rounded-2xl border border-slate-200 shadow-sm space-y-3">
+                          <h4 className="text-sm font-bold text-slate-800">{task.title}</h4>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-[10px] font-black text-slate-400 block mb-1">難易度 (1-100)</label>
+                              <input type="number" className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold outline-none focus:border-orange-500" value={task.evaluation?.difficulty || 50} onChange={e => { const val = parseInt(e.target.value); const ev = task.evaluation || {difficulty:50,outcome:3,memberEvaluations:[]}; saveSingleTaskToSheet({...task,evaluation:{...ev,difficulty:val}},settings.gasUrl,undefined,undefined,undefined,undefined,currentSheetName); }} />
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-black text-slate-400 block mb-1">成果 (1-5)</label>
+                              <input type="number" min="1" max="5" className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold outline-none focus:border-orange-500" value={task.evaluation?.outcome || 3} onChange={e => { const val = parseInt(e.target.value) as 1|2|3|4|5; const ev = task.evaluation || {difficulty:50,outcome:3,memberEvaluations:[]}; saveSingleTaskToSheet({...task,evaluation:{...ev,outcome:val}},settings.gasUrl,undefined,undefined,undefined,undefined,currentSheetName); }} />
+                            </div>
+                          </div>
+                          <div className="space-y-1.5">
+                            {members.filter(m => task.team?.includes(m.name)).map(m => {
+                              const ed = task.evaluation?.memberEvaluations?.find(me => me.memberId === m.name);
+                              return (
+                                <div key={m.name} className="flex items-center justify-between p-2 bg-slate-50 rounded-lg">
+                                  <div><span className="text-xs font-bold text-slate-700">{m.name}</span>{m.department && <span className="text-[9px] text-slate-400 ml-1.5">{m.department}</span>}</div>
+                                  <div className="flex gap-1">
+                                    {[1,2,3,4,5].map(r => (
+                                      <button key={r} onClick={() => { const ev = task.evaluation||{difficulty:50,outcome:3,memberEvaluations:[]}; const idx = ev.memberEvaluations.findIndex(me=>me.memberId===m.name); const ne = idx>=0 ? ev.memberEvaluations.map((s,i)=>i===idx?{...s,rating:r as any}:s) : [...ev.memberEvaluations,{memberId:m.name,rating:r as any}]; const updated={...task,evaluation:{...ev,memberEvaluations:ne}}; setTasks(prev=>prev.map(t=>t.id===task.id?updated:t)); saveSingleTaskToSheet(updated,settings.gasUrl,undefined,undefined,undefined,undefined,currentSheetName); }} className={`w-7 h-7 rounded-lg text-[10px] font-bold transition-all ${ed?.rating===r?'bg-orange-600 text-white':'bg-white border border-slate-200 text-slate-500 hover:bg-orange-50'}`}>{r}</button>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                      {tasks.filter(t=>!t.isSoftDeleted&&t.status===TaskStatus.COMPLETED).length===0 && <p className="text-xs text-slate-400 italic text-center py-8">評価対象の完了タスクがありません</p>}
+                    </div>
+                  </div>
+                )}
+                {evaluatorTab === 'results' && (
+                  <div className="space-y-4">
+                    <h3 className="font-black text-sm flex items-center gap-2 text-orange-700"><Award className="w-4 h-4" /> 評価結果</h3>
+                    <EvaluationView tasks={tasks} members={members} isAdmin={true} currentUserName={settings.userName} />
+                  </div>
+                )}
+                {evaluatorTab === 'epics' && (
+                  <div className="space-y-4">
+                    <h3 className="font-black text-sm flex items-center gap-2 text-orange-700"><Target className="w-4 h-4" /> エピック編集</h3>
+                    {localGoalEpics.length === 0 && <p className="text-xs text-slate-400 italic">目標エピックが設定されていません</p>}
+                    {localGoalEpics.map((ge, idx) => (
+                      <div key={ge.id || idx} className="p-4 rounded-2xl border border-orange-100 bg-orange-50/30 space-y-3">
+                        <span className="text-sm font-black text-slate-800">{ge.name}</span>
+                        <div><label className="text-[10px] font-black text-slate-400 block mb-1">期日</label><input type="date" className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:border-orange-500" value={ge.dueDate||''} onChange={e=>handleUpdateGoalEpic(ge.id,{dueDate:e.target.value})} /></div>
+                        <div><label className="text-[10px] font-black text-slate-400 block mb-1">ゴール</label><textarea className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:border-orange-500 h-14 resize-none" value={ge.goal||''} onChange={e=>handleUpdateGoalEpic(ge.id,{goal:e.target.value})} /></div>
+                        <div><label className="text-[10px] font-black text-slate-400 block mb-1">ルール</label><textarea className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:border-orange-500 h-14 resize-none" value={ge.rule||''} onChange={e=>handleUpdateGoalEpic(ge.id,{rule:e.target.value})} /></div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {evaluatorTab === 'score' && (
+                  <div className="space-y-6">
+                    <h3 className="font-black text-sm flex items-center gap-2 text-orange-700"><Star className="w-4 h-4" /> エピック総合評価 (0–10)</h3>
+                    {localGoalEpics.length === 0 && <p className="text-xs text-slate-400 italic">目標エピックが設定されていません</p>}
+                    {localGoalEpics.map((ge, idx) => (
+                      <div key={ge.id || idx} className="p-5 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-3">
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm font-black text-slate-800">{ge.name}</span>
+                          <span className="text-2xl font-black text-orange-600">{ge.totalScore ?? 0}<span className="text-sm text-slate-400 font-bold">/10</span></span>
+                        </div>
+                        <input type="range" min="0" max="10" step="0.5" className="w-full accent-orange-600" value={ge.totalScore ?? 0} onChange={e => handleUpdateGoalEpic(ge.id, { totalScore: parseFloat(e.target.value) })} />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="p-5 border-t bg-slate-50/50 flex-shrink-0 flex justify-end">
+                <button onClick={() => setShowEvaluatorModal(false)} className="px-6 py-2.5 bg-orange-600 text-white rounded-xl font-black text-xs hover:bg-orange-700 transition-all">閉じる</button>
+              </div>
+            </div>
+          </div>
         )}
 
         {/* ======= Manager専用設定モーダル ======= */}
@@ -1064,18 +1215,25 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
                   </div>
                 )}
                 {/* エピック編集タブ */}
-                {managerSettingsTab === 'epics' && (
+                {managerSettingsTab === 'epics' && (() => {
+                  const totalW = localGoalEpics.reduce((s, g) => s + (g.weight || 0), 0);
+                  return (
                   <div className="space-y-4">
-                    <h3 className="font-black text-sm flex items-center gap-2 text-blue-700"><Briefcase className="w-4 h-4" /> エピック編集</h3>
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-black text-sm flex items-center gap-2 text-blue-700"><Briefcase className="w-4 h-4" /> エピック編集 (合計100ポイント)</h3>
+                      <div className={`text-[10px] font-black px-3 py-1 rounded-full ${totalW === 100 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                        {totalW} / 100pt{totalW !== 100 && ' ⚠'}
+                      </div>
+                    </div>
                     {localGoalEpics.length === 0 && <p className="text-xs text-slate-400 italic">目標エピックが設定されていません</p>}
                     {localGoalEpics.map((ge, idx) => (
                       <div key={ge.id || idx} className="p-4 rounded-2xl border border-blue-100 bg-blue-50/30 space-y-3">
                         <div className="flex items-center justify-between gap-3">
                           <span className="text-sm font-black text-slate-800">{ge.name}</span>
                           <div className="flex items-center gap-1.5 flex-shrink-0">
-                            <label className="text-[10px] font-black text-slate-500">配分</label>
+                            <label className="text-[10px] font-black text-slate-500">ポイント</label>
                             <input type="number" min="0" max="100" className="w-16 p-1.5 bg-white border border-blue-200 rounded-lg text-xs font-black text-blue-700 outline-none focus:border-blue-500 text-center" value={ge.weight} onChange={e=>handleUpdateGoalEpic(ge.id,{weight:parseInt(e.target.value)||0})} />
-                            <span className="text-[10px] font-black text-blue-700">%</span>
+                            <span className="text-[10px] font-black text-blue-700">pt</span>
                           </div>
                         </div>
                         <div><label className="text-[10px] font-black text-slate-400 block mb-1">期日</label><input type="date" className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-blue-500" value={ge.dueDate||''} onChange={e=>handleUpdateGoalEpic(ge.id,{dueDate:e.target.value})} /></div>
@@ -1084,7 +1242,8 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
                       </div>
                     ))}
                   </div>
-                )}
+                  );
+                })()}
                 {/* 総合評価スライダータブ */}
                 {managerSettingsTab === 'score' && (
                   <div className="space-y-6">
@@ -1122,6 +1281,18 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
           </div>
         )}
 
+        {/* ======= 更新履歴モーダル ======= */}
+        {showActivityModal && (
+          <ActivityHistoryModal
+            tasks={tasks}
+            onClose={() => setShowActivityModal(false)}
+            onTaskClick={(taskId) => {
+              setExpandedTaskId(taskId);
+              setInitialTaskTab('chat');
+            }}
+          />
+        )}
+
         {showSettingsModal && (
           <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4">
             <div className="bg-white rounded-[2.5rem] w-full max-w-4xl shadow-2xl overflow-hidden animate-in zoom-in duration-200 max-h-[90vh] flex flex-col">
@@ -1146,6 +1317,7 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
                 {isAdmin && (
                   <div className="w-full mt-2 pt-2 border-t border-slate-200 flex flex-wrap gap-1">
                     <span className="w-full text-[9px] font-black text-slate-400 uppercase ml-2 mb-1 flex items-center gap-1">👑 Administrator Menu</span>
+                    <button onClick={() => setSettingsTab('scores')} className={`py-2 px-4 text-[10px] font-black uppercase tracking-widest transition-all rounded-lg ${settingsTab === 'scores' ? 'bg-amber-50 text-amber-700 shadow-sm border border-amber-200' : 'text-slate-400 hover:text-slate-600'}`}>評価スコア</button>
                     <button onClick={() => setSettingsTab('evaluation_tasks')} className={`py-2 px-4 text-[10px] font-black uppercase tracking-widest transition-all rounded-lg ${settingsTab === 'evaluation_tasks' ? 'bg-amber-50 text-amber-700 shadow-sm border border-amber-200' : 'text-slate-400 hover:text-slate-600'}`}>評価</button>
                     <button onClick={() => setSettingsTab('evaluation')} className={`py-2 px-4 text-[10px] font-black uppercase tracking-widest transition-all rounded-lg ${settingsTab === 'evaluation' ? 'bg-amber-50 text-amber-700 shadow-sm border border-amber-200' : 'text-slate-400 hover:text-slate-600'}`}>評価結果</button>
                     <button onClick={() => setSettingsTab('members')} className={`py-2 px-4 text-[10px] font-black uppercase tracking-widest transition-all rounded-lg ${settingsTab === 'members' ? 'bg-amber-50 text-amber-700 shadow-sm border border-amber-200' : 'text-slate-400 hover:text-slate-600'}`}>メンバー</button>
@@ -1222,14 +1394,20 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
                   </div>
                 )}
                 {settingsTab === 'epics' && isAdmin && (() => {
+                  const totalWeight = localGoalEpics.reduce((s, g) => s + (g.weight || 0), 0);
                   return (
                   <div className="space-y-4">
                     {/* goalEpics詳細編集（Excel由来のプロジェクト） */}
                     {localGoalEpics.length > 0 && (
                       <div className="space-y-3">
-                        <h3 className="font-black text-sm flex items-center gap-2 text-amber-600">
-                          <Target className="w-4 h-4" /> 目標エピック詳細編集
-                        </h3>
+                        <div className="flex items-center justify-between">
+                          <h3 className="font-black text-sm flex items-center gap-2 text-amber-600">
+                            <Target className="w-4 h-4" /> 目標エピック詳細編集
+                          </h3>
+                          <div className={`text-xs font-black px-3 py-1 rounded-full ${totalWeight === 100 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                            合計ポイント: {totalWeight} / 100{totalWeight !== 100 && ' ⚠ 合計が100になるよう調整してください'}
+                          </div>
+                        </div>
                         {localGoalEpics.map((ge, idx) => (
                           <div key={ge.id || idx} className="p-5 rounded-2xl border border-amber-100 bg-amber-50/30 space-y-3">
                             {/* ヘッダー: 名前 + 配分% */}
@@ -1274,6 +1452,19 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
                                 value={ge.rule || ''}
                                 onChange={e => handleUpdateGoalEpic(ge.id, { rule: e.target.value })}
                                 placeholder="ルールを入力..."
+                              />
+                            </div>
+                            {/* Admin: 総合評価スライダー */}
+                            <div className="bg-amber-50 p-3 rounded-xl border border-amber-100">
+                              <div className="flex justify-between items-center mb-2">
+                                <label className="text-[10px] font-black text-amber-600 uppercase tracking-widest">総合評価スコア (0–10) — Admin編集</label>
+                                <span className="text-lg font-black text-amber-700">{ge.totalScore ?? 0}<span className="text-xs text-slate-400 font-bold">/10</span></span>
+                              </div>
+                              <input
+                                type="range" min="0" max="10" step="0.5"
+                                className="w-full accent-amber-600"
+                                value={ge.totalScore ?? 0}
+                                onChange={e => handleUpdateGoalEpic(ge.id, { totalScore: parseFloat(e.target.value) })}
                               />
                             </div>
                             {/* メンバー配分 */}
@@ -1357,6 +1548,86 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
                   </div>
                   );
                 })()}
+                {settingsTab === 'scores' && isAdmin && (
+                  <div className="space-y-8">
+                    <h3 className="font-black text-sm flex items-center gap-2 uppercase tracking-wider text-amber-600"><Star className="w-4 h-4" /> 評価スコア設定</h3>
+
+                    {/* プロジェクト評価 0-10 */}
+                    <div className="p-6 bg-white border border-amber-100 rounded-2xl shadow-sm space-y-4">
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <h4 className="font-black text-sm text-slate-800">プロジェクト総合評価</h4>
+                          <p className="text-[10px] text-slate-400 font-bold mt-0.5">このプロジェクト全体の達成度・完成度を評価してください</p>
+                        </div>
+                        <span className="text-3xl font-black text-amber-600">
+                          {localProjectScore}<span className="text-sm text-slate-400 font-bold">/10</span>
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="text-[10px] font-black text-slate-400">0</span>
+                        <input
+                          type="range" min="0" max="10" step="0.5"
+                          className="flex-1 accent-amber-600"
+                          value={localProjectScore}
+                          onChange={e => {
+                            const val = parseFloat(e.target.value);
+                            setLocalProjectScore(val);
+                            if (projectId) {
+                              const proj = getProjectsMeta().find(p => p.id === projectId);
+                              if (proj) updateProjectInStore({ ...proj, projectScore: val, updatedAt: new Date().toISOString() });
+                            }
+                          }}
+                        />
+                        <span className="text-[10px] font-black text-slate-400">10</span>
+                      </div>
+                      <div className="flex justify-between text-[9px] text-slate-400 font-bold px-1">
+                        {[0,2,4,6,8,10].map(v => <span key={v}>{v}</span>)}
+                      </div>
+                      <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-amber-500 transition-all" style={{ width: `${localProjectScore * 10}%` }} />
+                      </div>
+                    </div>
+
+                    {/* エピック別評価 0-10 */}
+                    {localGoalEpics.length > 0 && (
+                      <div className="space-y-4">
+                        <h4 className="font-black text-sm text-slate-700 flex items-center gap-2">
+                          <Target className="w-4 h-4 text-amber-600" /> エピック別評価 (0–10)
+                        </h4>
+                        <p className="text-[10px] text-slate-400 font-bold -mt-2">各エピックの達成度を0〜10で評価してください。役員ダッシュボードに反映されます。</p>
+                        {localGoalEpics.map((ge, idx) => (
+                          <div key={ge.id || idx} className="p-5 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-3">
+                            <div className="flex justify-between items-center">
+                              <span className="text-sm font-black text-slate-800">{ge.name}</span>
+                              <span className="text-2xl font-black text-amber-600">
+                                {ge.totalScore ?? 0}<span className="text-sm text-slate-400 font-bold">/10</span>
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className="text-[10px] font-black text-slate-400">0</span>
+                              <input
+                                type="range" min="0" max="10" step="0.5"
+                                className="flex-1 accent-amber-600"
+                                value={ge.totalScore ?? 0}
+                                onChange={e => handleUpdateGoalEpic(ge.id, { totalScore: parseFloat(e.target.value) })}
+                              />
+                              <span className="text-[10px] font-black text-slate-400">10</span>
+                            </div>
+                            <div className="flex justify-between text-[9px] text-slate-400 font-bold px-1">
+                              {[0,2,4,6,8,10].map(v => <span key={v}>{v}</span>)}
+                            </div>
+                            <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                              <div className="h-full bg-amber-400 transition-all" style={{ width: `${(ge.totalScore ?? 0) * 10}%` }} />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {localGoalEpics.length === 0 && (
+                      <p className="text-xs text-slate-400 italic text-center py-4">目標エピックが設定されていません（エピックタブで追加できます）</p>
+                    )}
+                  </div>
+                )}
                 {settingsTab === 'evaluation' && isAdmin && (
                   <div className="space-y-4">
                     <h3 className="font-black text-sm flex items-center gap-2 uppercase tracking-wider text-red-600"><Award className="w-4 h-4" /> 評価結果</h3>
@@ -1427,26 +1698,36 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
                   </div>
                 )}
                 {settingsTab === 'members' && isAdmin && (() => {
-                  // 部門リスト（登録済みメンバーから収集）
+                  // 事業部・部署リスト（登録済みメンバーから収集）
+                  const allBusinessUnits = Array.from(new Set(members.map(m => m.businessUnit).filter(Boolean))) as string[];
                   const allDepts = Array.from(new Set(members.map(m => m.department).filter(Boolean))) as string[];
-                  const filteredMembers = memberDeptFilter === 'all' ? members : members.filter(m => m.department === memberDeptFilter);
+                  const filteredMembers = memberDeptFilter === 'all' ? members
+                    : members.filter(m => m.businessUnit === memberDeptFilter || m.department === memberDeptFilter);
 
-                  // CSV解析: "部門,氏名" or "氏名,部門" or "部門,役職,氏名" 等に対応
+                  // CSV解析: "ID,事業部,部署,氏名" 等に対応
                   const parseCsvMembers = (text: string): MemberInfo[] => {
                     const lines = text.split(/\r?\n/).filter(l => l.trim());
                     if (lines.length === 0) return [];
                     const results: MemberInfo[] = [];
-                    // ヘッダー行の列を検出
                     const header = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
-                    const deptIdx = header.findIndex(h => h.includes('部門') || h.includes('部署') || h.includes('department'));
-                    const nameIdx = header.findIndex(h => h.includes('氏名') || h.includes('名前') || h.includes('name') || h.includes('社員'));
-                    if (nameIdx < 0) return []; // 名前列が見つからない場合はスキップ
-                    const dataStart = (deptIdx >= 0 || nameIdx >= 0) ? 1 : 0; // ヘッダーがあれば1行目からデータ
-                    for (let i = dataStart; i < lines.length; i++) {
+                    const idIdx = header.findIndex(h => /^(ID|社員ID|社員番号|id)$/i.test(h));
+                    const buIdx = header.findIndex(h => h.includes('事業部') || h.includes('business'));
+                    const deptIdx = header.findIndex(h => (h.includes('部署') || h.includes('部門') || h.includes('department')) && !h.includes('事業'));
+                    const nameIdx = header.findIndex(h => h.includes('氏名') || h.includes('名前') || /^name$/i.test(h));
+                    if (nameIdx < 0) return [];
+                    for (let i = 1; i < lines.length; i++) {
                       const cols = lines[i].split(',').map(c => c.trim().replace(/"/g, ''));
                       const name = cols[nameIdx]?.trim();
-                      const dept = deptIdx >= 0 ? cols[deptIdx]?.trim() : '';
-                      if (name) results.push({ name, email: '', type: 'internal', role: 'user', department: dept || undefined });
+                      if (!name) continue;
+                      results.push({
+                        name,
+                        email: '',
+                        type: 'internal',
+                        role: 'user',
+                        employeeId: idIdx >= 0 ? cols[idIdx]?.trim() || undefined : undefined,
+                        businessUnit: buIdx >= 0 ? cols[buIdx]?.trim() || undefined : undefined,
+                        department: deptIdx >= 0 ? cols[deptIdx]?.trim() || undefined : undefined,
+                      });
                     }
                     return results;
                   };
@@ -1487,29 +1768,36 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
 
                     {/* CSVフォーマットヒント */}
                     <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-[10px] text-blue-700 font-bold">
-                      📄 CSVフォーマット: 1行目にヘッダー「部門,氏名」「部署,名前」等を記載してください。Excelで「CSV(UTF-8)」として保存したファイルが使えます。
+                      📄 CSVフォーマット: 1行目にヘッダー「ID,事業部,部署,氏名」等を記載してください。Excelで「CSV(UTF-8)」として保存したファイルが使えます。
                     </div>
 
                     {/* 手動追加 */}
-                    <div className="flex items-center gap-2 flex-wrap border border-slate-100 bg-slate-50 rounded-xl p-3">
-                      <span className="text-[10px] font-black text-slate-500">手動追加:</span>
-                      <input type="text" value={newMemberDept} onChange={e => setNewMemberDept(e.target.value)} placeholder="部門（任意）" className="p-2 border border-slate-200 rounded-lg text-xs outline-none focus:border-red-500 w-28" />
-                      <input type="text" value={newMemberName} onChange={e => setNewMemberName(e.target.value)} placeholder="氏名" className="p-2 border border-slate-200 rounded-lg text-xs outline-none focus:border-red-500 w-32" onKeyDown={e => { if (e.key === 'Enter' && newMemberName) { setMembers(prev => [...prev, { name: newMemberName, email: '', type: 'internal', role: 'user', department: newMemberDept || undefined }]); setNewMemberName(''); setNewMemberDept(''); }}} />
-                      <button onClick={() => {
-                        if (newMemberName) {
-                          setMembers(prev => [...prev, { name: newMemberName, email: '', type: 'internal', role: 'user', department: newMemberDept || undefined }]);
-                          setNewMemberName(''); setNewMemberDept('');
-                        }
-                      }} className="text-[10px] font-black bg-red-50 text-red-600 px-4 py-2 rounded-lg hover:bg-red-100 transition-all flex items-center gap-1">
-                        <UserPlus className="w-3 h-3" /> 追加
-                      </button>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2 border border-slate-100 bg-slate-50 rounded-xl p-3">
+                      <div className="col-span-2 md:col-span-3 text-[10px] font-black text-slate-500 mb-1">手動追加</div>
+                      <input type="text" value={newMemberId} onChange={e => setNewMemberId(e.target.value)} placeholder="社員ID（任意）" className="p-2 border border-slate-200 rounded-lg text-xs outline-none focus:border-red-500 bg-white" />
+                      <input type="text" value={newMemberName} onChange={e => setNewMemberName(e.target.value)} placeholder="氏名 *" className="p-2 border border-slate-200 rounded-lg text-xs outline-none focus:border-red-500 bg-white" onKeyDown={e => { if (e.key === 'Enter' && newMemberName) { setMembers(prev => [...prev, { name: newMemberName, email: '', type: 'internal', role: 'user', employeeId: newMemberId || undefined, businessUnit: newMemberBusinessUnit || undefined, department: newMemberDept || undefined }]); setNewMemberName(''); setNewMemberId(''); setNewMemberBusinessUnit(''); setNewMemberDept(''); }}} />
+                      <input type="text" value={newMemberBusinessUnit} onChange={e => setNewMemberBusinessUnit(e.target.value)} placeholder="事業部名（任意）" className="p-2 border border-slate-200 rounded-lg text-xs outline-none focus:border-red-500 bg-white" />
+                      <input type="text" value={newMemberDept} onChange={e => setNewMemberDept(e.target.value)} placeholder="部署名（任意）" className="p-2 border border-slate-200 rounded-lg text-xs outline-none focus:border-red-500 bg-white" />
+                      <div className="flex justify-end items-center">
+                        <button onClick={() => {
+                          if (newMemberName) {
+                            setMembers(prev => [...prev, { name: newMemberName, email: '', type: 'internal', role: 'user', employeeId: newMemberId || undefined, businessUnit: newMemberBusinessUnit || undefined, department: newMemberDept || undefined }]);
+                            setNewMemberName(''); setNewMemberId(''); setNewMemberBusinessUnit(''); setNewMemberDept('');
+                          }
+                        }} className="text-[10px] font-black bg-red-50 text-red-600 px-4 py-2 rounded-lg hover:bg-red-100 transition-all flex items-center gap-1">
+                          <UserPlus className="w-3 h-3" /> 追加
+                        </button>
+                      </div>
                     </div>
 
-                    {/* 部門フィルター */}
-                    {allDepts.length > 0 && (
+                    {/* 事業部・部署フィルター */}
+                    {(allBusinessUnits.length > 0 || allDepts.length > 0) && (
                       <div className="flex items-center gap-2 flex-wrap">
-                        <Filter className="w-3.5 h-3.5 text-slate-400" />
-                        <button onClick={() => setMemberDeptFilter('all')} className={`text-[10px] font-black px-3 py-1.5 rounded-full transition-all ${memberDeptFilter === 'all' ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>全部門</button>
+                        <Filter className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                        <button onClick={() => setMemberDeptFilter('all')} className={`text-[10px] font-black px-3 py-1.5 rounded-full transition-all ${memberDeptFilter === 'all' ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>すべて</button>
+                        {allBusinessUnits.map(bu => (
+                          <button key={bu} onClick={() => setMemberDeptFilter(bu)} className={`text-[10px] font-black px-3 py-1.5 rounded-full transition-all ${memberDeptFilter === bu ? 'bg-indigo-600 text-white' : 'bg-indigo-50 text-indigo-500 hover:bg-indigo-100'}`}>{bu}</button>
+                        ))}
                         {allDepts.map(dept => (
                           <button key={dept} onClick={() => setMemberDeptFilter(dept)} className={`text-[10px] font-black px-3 py-1.5 rounded-full transition-all ${memberDeptFilter === dept ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{dept}</button>
                         ))}
@@ -1531,14 +1819,27 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
                                 {m.isLeader ? <Crown className="w-4 h-4" /> : <span className="text-[10px] font-black">{m.name[0]}</span>}
                               </div>
                               <div className="min-w-0">
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  {m.employeeId && <span className="text-[9px] font-black text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded font-mono">{m.employeeId}</span>}
                                   <span className="text-xs font-black text-slate-700 truncate">{m.name}</span>
                                   {m.isLeader && <span className="text-[9px] font-black text-amber-600 bg-amber-100 px-2 py-0.5 rounded-full">リーダー</span>}
                                 </div>
-                                {m.department && <span className="text-[10px] text-slate-400 font-bold">{m.department}</span>}
+                                <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                                  {m.businessUnit && <span className="text-[9px] text-indigo-500 font-bold">{m.businessUnit}</span>}
+                                  {m.businessUnit && m.department && <span className="text-[9px] text-slate-300">›</span>}
+                                  {m.department && <span className="text-[9px] text-slate-400 font-bold">{m.department}</span>}
+                                </div>
                               </div>
                             </div>
                             <div className="flex items-center gap-2 flex-shrink-0">
+                              {/* 評価者トグル */}
+                              <button
+                                onClick={() => setMembers(prev => prev.map((mem, i) => i === realIdx ? { ...mem, isEvaluator: !mem.isEvaluator } : mem))}
+                                title={m.isEvaluator ? '評価者解除' : '評価者に指定'}
+                                className={`p-1.5 rounded-lg transition-all ${m.isEvaluator ? 'text-orange-500 bg-orange-100 hover:bg-orange-200' : 'text-slate-300 hover:text-orange-500 hover:bg-orange-50'}`}
+                              >
+                                <Award className="w-4 h-4" />
+                              </button>
                               {/* リーダートグル */}
                               <button
                                 onClick={() => setMembers(prev => prev.map((mem, i) => i === realIdx ? { ...mem, isLeader: !mem.isLeader } : mem))}
@@ -1550,7 +1851,7 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
                               <select
                                 value={m.role}
                                 onChange={(e) => {
-                                  const newRole = e.target.value as 'admin' | 'manager' | 'user';
+                                  const newRole = e.target.value as 'admin' | 'manager' | 'user' | 'executive';
                                   setMembers(prev => prev.map((mem, i) => i === realIdx ? { ...mem, role: newRole } : mem));
                                 }}
                                 className="text-[10px] font-black bg-white border border-slate-200 rounded-lg p-1 outline-none focus:border-red-500"

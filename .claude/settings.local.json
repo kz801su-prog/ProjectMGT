@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find c:/Users/sinco/.gemini/antigravity/scratch/ProjectMGT統合 -name *.xlsx -o -name *.xls -o -name *.csv)",
+      "Bash(node -e \":*)"
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "clearContextOnNewFile": true,
+  "disableCacheRead": false,
+  "excludedPaths": [
+    "*.md",
+    "*.html",
+    "*.json",
+    "*.csv",
+    "*.log",
+    "day1-minigame",
+    "day2-minigame",
+    "day3-minigame",
+    "day4-minigame",
+    "day5-minigame",
+    "day6-minigame",
+    "day7-minigame",
+    ".git"
+  ],
+  "maxContextSize": 100000
+}

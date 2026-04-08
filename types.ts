@@ -117,8 +117,11 @@ export interface MemberInfo {
   email: string;
   type: 'internal' | 'external';
   role: 'admin' | 'manager' | 'user' | 'executive';
-  department?: string; // 部門
-  isLeader?: boolean;  // プロジェクトリーダー
+  employeeId?: string;   // 社員ID
+  businessUnit?: string; // 事業部名
+  department?: string;   // 部署名
+  isLeader?: boolean;    // プロジェクトリーダー
+  isEvaluator?: boolean; // 評価者（Adminが指定）
 }
 
 export interface DashboardStats {

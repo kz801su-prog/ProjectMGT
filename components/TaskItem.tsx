@@ -30,6 +30,7 @@ interface Props {
   epics?: string[];
   allTasks?: Task[]; // To show sub-tasks
   depth?: number;
+  projectDepartment?: string; // プロジェクト部署（メンバー優先表示用）
 }
 
 export const TaskItem: React.FC<Props> = ({
@@ -52,8 +53,19 @@ export const TaskItem: React.FC<Props> = ({
   onAddSiblingTask,
   onDeleteTask,
   allTasks = [],
-  depth = 0
+  depth = 0,
+  projectDepartment = '',
 }) => {
+  // 部署に属するメンバーを上位に並べる (task.department → projectDepartment の順で優先)
+  const sortedMembers = React.useMemo(() => {
+    const dept = task.department || projectDepartment;
+    if (!dept) return members;
+    return [...members].sort((a, b) => {
+      const aMatch = a.department === dept ? 0 : 1;
+      const bMatch = b.department === dept ? 0 : 1;
+      return aMatch - bMatch;
+    });
+  }, [members, task.department, projectDepartment]);
   const [isExpanded, setIsExpanded] = useState(isInitiallyExpanded);
   const [activeTab, setActiveTab] = useState<'basic' | 'chat' | 'files' | 'hierarchy'>(initialTab as any || 'basic');
 
@@ -380,11 +392,11 @@ export const TaskItem: React.FC<Props> = ({
                     />
                   </div>
                   <div className="max-h-[260px] overflow-y-auto custom-scrollbar p-2">
-                    {members.filter(m =>
+                    {sortedMembers.filter(m =>
                       !responsibleSearch ||
                       m.name.toLowerCase().includes(responsibleSearch.toLowerCase()) ||
                       (m.department || '').toLowerCase().includes(responsibleSearch.toLowerCase())
-                    ).length > 0 ? members.filter(m =>
+                    ).length > 0 ? sortedMembers.filter(m =>
                       !responsibleSearch ||
                       m.name.toLowerCase().includes(responsibleSearch.toLowerCase()) ||
                       (m.department || '').toLowerCase().includes(responsibleSearch.toLowerCase())
@@ -587,7 +599,7 @@ export const TaskItem: React.FC<Props> = ({
                             </div>
                             <div className="max-h-48 overflow-y-auto custom-scrollbar">
                               <button onClick={() => { onUpdateTaskDetails?.(task.id, { reviewer: '' }); setIsReviewerDropdownOpen(false); setReviewerSearch(''); }} className="w-full text-left px-4 py-2 text-xs font-bold text-slate-400 hover:bg-slate-50">未設定</button>
-                              {members.filter(m =>
+                              {sortedMembers.filter(m =>
                                 !reviewerSearch ||
                                 m.name.toLowerCase().includes(reviewerSearch.toLowerCase()) ||
                                 (m.department || '').toLowerCase().includes(reviewerSearch.toLowerCase())
@@ -600,7 +612,7 @@ export const TaskItem: React.FC<Props> = ({
                                   </div>
                                 </button>
                               ))}
-                              {members.filter(m => !reviewerSearch || m.name.toLowerCase().includes(reviewerSearch.toLowerCase()) || (m.department || '').toLowerCase().includes(reviewerSearch.toLowerCase())).length === 0 && (
+                              {sortedMembers.filter(m => !reviewerSearch || m.name.toLowerCase().includes(reviewerSearch.toLowerCase()) || (m.department || '').toLowerCase().includes(reviewerSearch.toLowerCase())).length === 0 && (
                                 <p className="px-4 py-2 text-xs text-slate-400 font-bold text-center">一致するメンバーがいません</p>
                               )}
                             </div>
@@ -640,7 +652,7 @@ export const TaskItem: React.FC<Props> = ({
                                 />
                               </div>
                               <div className="max-h-56 overflow-y-auto custom-scrollbar">
-                                {members.filter(m =>
+                                {sortedMembers.filter(m =>
                                   !task.team?.includes(m.name) && (
                                     !teamSearch ||
                                     m.name.toLowerCase().includes(teamSearch.toLowerCase()) ||
@@ -655,7 +667,7 @@ export const TaskItem: React.FC<Props> = ({
                                     </div>
                                   </button>
                                 ))}
-                                {members.filter(m => !task.team?.includes(m.name) && (!teamSearch || m.name.toLowerCase().includes(teamSearch.toLowerCase()) || (m.department || '').toLowerCase().includes(teamSearch.toLowerCase()))).length === 0 && (
+                                {sortedMembers.filter(m => !task.team?.includes(m.name) && (!teamSearch || m.name.toLowerCase().includes(teamSearch.toLowerCase()) || (m.department || '').toLowerCase().includes(teamSearch.toLowerCase()))).length === 0 && (
                                   <div className="px-4 py-3 text-[10px] text-slate-400 font-bold text-center">
                                     {teamSearch ? '一致するメンバーがいません' : '追加できるメンバーがいません'}
                                   </div>
