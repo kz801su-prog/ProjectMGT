@@ -49,11 +49,16 @@ if ($method === 'GET') {
     // ポータルプロジェクト一覧取得（goalEpics含む完全データ）
     if ($action === 'get_portal_projects') {
         try {
-            $pdo->exec("CREATE TABLE IF NOT EXISTS portal_settings (
-                setting_key VARCHAR(100) PRIMARY KEY,
-                setting_value LONGTEXT,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            // テーブル作成試行（失敗しても SELECT へ進む）
+            try {
+                $pdo->exec("CREATE TABLE IF NOT EXISTS portal_settings (
+                    setting_key VARCHAR(100) PRIMARY KEY,
+                    setting_value LONGTEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            } catch (Exception $create_err) {
+                error_log('portal_settings CREATE TABLE failed: ' . $create_err->getMessage());
+            }
             $stmt = $pdo->prepare("SELECT setting_value, updated_at FROM portal_settings WHERE setting_key = 'portal_projects' LIMIT 1");
             $stmt->execute();
             $row = $stmt->fetch();
@@ -68,7 +73,13 @@ if ($method === 'GET') {
                 echo json_encode(['status' => 'success', 'projects' => []]);
             }
         } catch (Exception $e) {
-            echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
+            // テーブルが存在しない場合は空配列を返す（エラーにしない）
+            $msg = $e->getMessage();
+            if (strpos($msg, "doesn't exist") !== false || strpos($msg, 'Table') !== false) {
+                echo json_encode(['status' => 'success', 'projects' => [], 'note' => 'table_not_found']);
+            } else {
+                echo json_encode(['status' => 'error', 'message' => $msg]);
+            }
         }
         exit;
     }
@@ -450,16 +461,30 @@ if ($method === 'POST') {
         // ポータルプロジェクト一覧保存（goalEpics含む完全データ）
         if ($action === 'save_portal_projects') {
             $projects = $data['projects'] ?? [];
-            $pdo->exec("CREATE TABLE IF NOT EXISTS portal_settings (
-                setting_key VARCHAR(100) PRIMARY KEY,
-                setting_value LONGTEXT,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+            // テーブル存在確認 → なければ作成（CREATE権限なければスキップして INSERT 試行）
+            try {
+                $pdo->exec("CREATE TABLE IF NOT EXISTS portal_settings (
+                    setting_key VARCHAR(100) PRIMARY KEY,
+                    setting_value LONGTEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            } catch (Exception $create_err) {
+                // CREATE TABLE失敗はログのみ。テーブルが既にあれば INSERT は成功する
+                error_log('portal_settings CREATE TABLE failed (may already exist): ' . $create_err->getMessage());
+            }
+
+            $json_val = json_encode($projects, JSON_UNESCAPED_UNICODE);
+            if ($json_val === false) {
+                echo json_encode(['status' => 'error', 'message' => 'JSONエンコード失敗: ' . json_last_error_msg()]);
+                exit;
+            }
+
             $stmt = $pdo->prepare(
                 "INSERT INTO portal_settings (setting_key, setting_value) VALUES ('portal_projects', :val)
                  ON DUPLICATE KEY UPDATE setting_value = :val, updated_at = CURRENT_TIMESTAMP"
             );
-            $stmt->execute([':val' => json_encode($projects, JSON_UNESCAPED_UNICODE)]);
+            $stmt->execute([':val' => $json_val]);
             echo json_encode(['status' => 'success', 'savedCount' => count($projects)]);
             exit;
         }

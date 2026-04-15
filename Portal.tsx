@@ -63,6 +63,7 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
     // 'idle' | 'saving' | 'saved' | 'error' | 'restoring'
     const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error' | 'restoring'>('idle');
     const [saveErrorMsg, setSaveErrorMsg] = useState('');
+    const [showSaveErrorDetail, setShowSaveErrorDetail] = useState(false);
     const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const isFirstMountRef = useRef(true);
 
@@ -439,12 +440,33 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
                             </div>
                         )}
                         {saveStatus === 'error' && (
-                            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-bold cursor-pointer"
-                                style={{ background: 'rgba(239,68,68,0.12)', color: '#f87171' }}
-                                title={saveErrorMsg}
-                                onClick={handleForceSave}
-                            >
-                                <CloudOff className="w-3 h-3" /> 保存失敗（クリックで再試行）
+                            <div className="flex items-center gap-1 rounded-xl overflow-hidden"
+                                style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)' }}>
+                                <button
+                                    onClick={handleForceSave}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold hover:bg-red-500/10 transition-colors"
+                                    style={{ color: '#f87171' }}
+                                    title="クリックで再試行"
+                                >
+                                    <CloudOff className="w-3 h-3" />
+                                    <span>
+                                        {/* エラー種別を先頭から抽出して表示 */}
+                                        {saveErrorMsg.startsWith('[ネットワーク') ? 'ネットワーク失敗' :
+                                         saveErrorMsg.startsWith('[HTTP') ? 'HTTP失敗' :
+                                         saveErrorMsg.startsWith('[SQL') ? 'SQL失敗' :
+                                         saveErrorMsg.startsWith('[レスポンス') ? 'レスポンス異常' :
+                                         saveErrorMsg.startsWith('[設定') ? '設定エラー' :
+                                         '保存失敗'}
+                                    </span>
+                                </button>
+                                <button
+                                    onClick={() => setShowSaveErrorDetail(v => !v)}
+                                    className="px-2 py-1.5 text-[10px] font-bold hover:bg-red-500/10 transition-colors border-l"
+                                    style={{ color: '#f87171', borderColor: 'rgba(239,68,68,0.25)' }}
+                                    title="エラー詳細"
+                                >
+                                    詳細
+                                </button>
                             </div>
                         )}
                         {isAdmin && (
@@ -480,6 +502,38 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
                     </div>
                 </div>
             </div>
+
+            {/* エラー詳細バナー（トップバー直下） */}
+            {saveStatus === 'error' && showSaveErrorDetail && (
+                <div className="sticky top-[57px] z-40 px-6 py-3"
+                    style={{ background: 'rgba(239,68,68,0.08)', borderBottom: '1px solid rgba(239,68,68,0.2)' }}>
+                    <div className="max-w-[1400px] mx-auto flex items-start gap-3">
+                        <CloudOff className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                        <div className="flex-1 min-w-0">
+                            <p className="text-xs font-black text-red-300 mb-0.5">強制保存エラー詳細</p>
+                            <p className="text-xs text-red-400/80 font-mono break-all">{saveErrorMsg}</p>
+                            <p className="text-[10px] text-red-400/50 mt-1 font-bold">
+                                ※ ブラウザのF12 → コンソールタブで詳細なエラーログを確認できます
+                            </p>
+                        </div>
+                        <div className="flex gap-2 flex-shrink-0">
+                            <button
+                                onClick={handleForceSave}
+                                className="px-3 py-1.5 rounded-lg text-[10px] font-black text-white"
+                                style={{ background: '#ef4444' }}
+                            >
+                                再試行
+                            </button>
+                            <button
+                                onClick={() => setShowSaveErrorDetail(false)}
+                                className="p-1.5 rounded-lg text-red-400 hover:bg-red-500/10"
+                            >
+                                <X className="w-3.5 h-3.5" />
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* メインコンテンツ */}
             <div className="max-w-[1400px] mx-auto px-6 pt-8 pb-16 relative z-10">

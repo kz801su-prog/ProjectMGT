@@ -220,20 +220,35 @@ export const savePortalProjectsToSql = async (
   apiUrl: string,
   projects: any[]
 ): Promise<boolean> => {
-  if (!apiUrl) throw new Error('API URL not set');
+  if (!apiUrl) throw new Error('[設定エラー] API URLが未設定です');
+  let response: Response;
   try {
-    const response = await fetch(apiUrl, {
+    response = await fetch(apiUrl, {
       method: 'POST',
       body: JSON.stringify({ action: 'save_portal_projects', projects }),
       headers: { 'Content-Type': 'application/json' },
     });
-    const result = await response.json();
-    if (result.status !== 'success') throw new Error(result.message || 'portal_projects保存失敗');
-    return true;
-  } catch (error: any) {
-    console.error('savePortalProjectsToSql failed:', error);
-    throw error;
+  } catch (networkErr: any) {
+    // fetch自体が失敗（サーバー到達不能・CORS等）
+    const msg = `[ネットワークエラー] サーバーに接続できません (${apiUrl}) — ${networkErr.message}`;
+    console.error('savePortalProjectsToSql network error:', networkErr);
+    throw new Error(msg);
   }
+  if (!response.ok) {
+    const msg = `[HTTPエラー] サーバーが ${response.status} を返しました`;
+    console.error('savePortalProjectsToSql http error:', response.status, await response.text().catch(() => ''));
+    throw new Error(msg);
+  }
+  let result: any;
+  try {
+    result = await response.json();
+  } catch (parseErr) {
+    throw new Error('[レスポンスエラー] サーバーのレスポンスがJSON形式ではありません（PHP構文エラーの可能性）');
+  }
+  if (result.status !== 'success') {
+    throw new Error(`[SQLエラー] ${result.message || 'portal_projects保存失敗'}`);
+  }
+  return true;
 };
 
 /** SQLからportal_projectsを取得（localStorage空の時の復元用）*/
