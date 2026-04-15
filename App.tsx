@@ -19,7 +19,7 @@ import { EpicListView } from './components/EpicListView';
 import { ActivityHistoryModal } from './components/ActivityHistoryModal';
 import { DEFAULT_GAS_URL, INITIAL_TASKS, DEFAULT_CLIQ_URL, MEMBERS as INITIAL_MEMBERS, ADMIN_USER_NAME, SHEET_GID, DEFAULT_PROJECTS } from './constants';
 import { PortalUser, getProjectPeriodLabel, GoalEpic } from './portalTypes';
-import { getProjectGasUrl, saveProjectGasUrl, getProjectCliqUrl, saveProjectCliqUrl, getProjectPassword, saveProjectPassword, getProjects as getProjectsMeta, getProjectEpics, saveProjectEpics, getProjectMembers, saveProjectMembers, updateProject as updateProjectInStore } from './projectDataService';
+import { getProjectGasUrl, saveProjectGasUrl, getProjectCliqUrl, saveProjectCliqUrl, getProjectPassword, saveProjectPassword, getProjects as getProjectsMeta, getProjectEpics, saveProjectEpics, getProjectMembers, saveProjectMembers, updateProject as updateProjectInStore, getGlobalTeamMembers } from './projectDataService';
 
 import GAS_CODE from './server/Code.js?raw';
 
@@ -119,6 +119,9 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
       const proj = getProjectsMeta().find(p => p.id === projectId);
       if (proj?.goalEpics && proj.goalEpics.length > 0) return [];
     }
+    // グローバルチームメンバーマスターを優先参照
+    const globalTeam = getGlobalTeamMembers();
+    if (globalTeam.length > 0) return globalTeam;
     const saved = localStorage.getItem('board_members_v2');
     if (saved) {
       try {

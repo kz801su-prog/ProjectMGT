@@ -112,6 +112,21 @@ export interface User {
   role: 'admin' | 'board_member' | 'staff' | 'external';
 }
 
+/** 半期ごとの獲得ポイント */
+export interface PeriodPoint {
+  periodId: string;    // 例: "2025-H1"
+  periodLabel: string; // 例: "2025年度 上半期"
+  points: number;      // 獲得ポイント
+}
+
+/** 関わったプロジェクトとその評価点数 */
+export interface MemberProjectScore {
+  projectId: string;
+  projectName: string;
+  periodId?: string;   // 対象期
+  score: number;       // 評価点数 (0-100)
+}
+
 export interface MemberInfo {
   name: string;
   email: string;
@@ -122,6 +137,9 @@ export interface MemberInfo {
   department?: string;   // 部署名
   isLeader?: boolean;    // プロジェクトリーダー
   isEvaluator?: boolean; // 評価者（Adminが指定）
+  // 実績データ
+  periodPoints?: PeriodPoint[];         // 毎期の獲得点数
+  projectScores?: MemberProjectScore[]; // 関わったプロジェクトと点数評価
 }
 
 export interface DashboardStats {

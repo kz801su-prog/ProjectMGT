@@ -3,11 +3,12 @@ import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import {
     Plus, Settings, LogOut, Search, Shield, BarChart3, LayoutGrid,
     FolderPlus, X, Sparkles, Briefcase, Pin, Clock, Filter, ChevronDown,
-    Upload, FileSpreadsheet, Target, CheckCircle2, AlertCircle, Building2
+    Upload, FileSpreadsheet, Target, CheckCircle2, AlertCircle, Building2,
+    Save, CloudOff, Cloud, RefreshCw
 } from 'lucide-react';
 import { PortalUser, ProjectMeta, GoalEpic, PROJECT_COLORS, PROJECT_ICONS, getCurrentHalfYear, getProjectPeriodLabel, getFiscalYearOptions } from './portalTypes';
 import { getProjects, saveProjects, sortProjects, addProject as addProjectToStore, updateProject as updateProjectInStore, deleteProject as deleteProjectFromStore, saveProjectEpics } from './projectDataService';
-import { createProjectSheet, saveEpicsToSheet, saveGoalEpicsToSql } from './mysqlService';
+import { createProjectSheet, saveEpicsToSheet, saveGoalEpicsToSql, savePortalProjectsToSql, loadPortalProjectsFromSql } from './mysqlService';
 import { DEFAULT_GAS_URL } from './constants';
 import ProjectCard from './components/ProjectCard';
 import BenchmarkView from './components/BenchmarkView';
@@ -56,6 +57,15 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
     const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
     const [editingProject, setEditingProject] = useState<ProjectMeta | null>(null);
 
+    // ======================================================
+    // 自動保存・強制保存ステータス
+    // ======================================================
+    // 'idle' | 'saving' | 'saved' | 'error' | 'restoring'
+    const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error' | 'restoring'>('idle');
+    const [saveErrorMsg, setSaveErrorMsg] = useState('');
+    const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const isFirstMountRef = useRef(true);
+
     const currentYear = new Date().getFullYear();
 
     // 目標ファイルアップロード
@@ -73,6 +83,76 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
     const [filterStatus, setFilterStatus] = useState<string>('all');
 
     const fiscalYearOptions = useMemo(() => getFiscalYearOptions(), []);
+
+    // ======================================================
+    // SQLへの保存ロジック（手動・自動共通）
+    // ======================================================
+    const effectiveGasUrl = gasUrl || DEFAULT_GAS_URL;
+
+    const persistProjectsToSql = useCallback(async (currentProjects: ProjectMeta[]) => {
+        setSaveStatus('saving');
+        setSaveErrorMsg('');
+        try {
+            await savePortalProjectsToSql(effectiveGasUrl, currentProjects);
+            setSaveStatus('saved');
+            setTimeout(() => setSaveStatus('idle'), 3000);
+        } catch (e: any) {
+            setSaveStatus('error');
+            setSaveErrorMsg(e.message || 'SQL保存失敗');
+        }
+    }, [effectiveGasUrl]);
+
+    // projectsが変化したら3秒デバウンスで自動保存
+    useEffect(() => {
+        if (isFirstMountRef.current) return; // 初回マウント時はスキップ
+        if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = setTimeout(() => {
+            persistProjectsToSql(projects);
+        }, 3000);
+        return () => {
+            if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+        };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [projects]);
+
+    // 起動時: localStorageが空または古い場合はSQLから復元
+    useEffect(() => {
+        const existing = getProjects();
+        const hasGoalEpics = existing.some(p => p.goalEpics && p.goalEpics.length > 0);
+
+        if (!hasGoalEpics) {
+            // SQLから復元を試みる
+            setSaveStatus('restoring');
+            loadPortalProjectsFromSql(effectiveGasUrl).then(result => {
+                if (result && result.projects.length > 0) {
+                    const sqlHasGoalEpics = result.projects.some((p: any) => p.goalEpics && p.goalEpics.length > 0);
+                    if (sqlHasGoalEpics) {
+                        // SQLのデータをlocalStorageに書き戻し、Reactステートも更新
+                        saveProjects(result.projects as ProjectMeta[]);
+                        setProjects(sortProjects(result.projects as ProjectMeta[]));
+                        console.log('[Portal] SQLからプロジェクト復元:', result.projects.length, '件');
+                    }
+                }
+                setSaveStatus('idle');
+            }).catch(() => {
+                setSaveStatus('idle');
+            });
+        } else {
+            setSaveStatus('idle');
+        }
+
+        // 初回マウント完了フラグ（自動保存のスキップ解除は少し遅らせる）
+        const t = setTimeout(() => { isFirstMountRef.current = false; }, 500);
+        return () => clearTimeout(t);
+    // 初回のみ実行
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // 強制保存ハンドラ（ボタン用）
+    const handleForceSave = useCallback(async () => {
+        if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+        await persistProjectsToSql(projects);
+    }, [projects, persistProjectsToSql]);
 
     // 新規プロジェクトフォーム
     const [newProject, setNewProject] = useState({
@@ -276,7 +356,11 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
         setShowGoalUploadModal(false);
         setGoalParsedProjects([]);
         setGoalUploadError('');
-    }, [goalParsedProjects, goalFiscalYear, goalHalfPeriod, gasUrl]);
+
+        // 目標ファイル取込後に即時SQLバックアップ（自動保存より優先）
+        if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+        persistProjectsToSql(currentProjects);
+    }, [goalParsedProjects, goalFiscalYear, goalHalfPeriod, gasUrl, persistProjectsToSql]);
 
     const currentHalf = getCurrentHalfYear();
 
@@ -334,6 +418,47 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
                             </span>
                             <span className="text-xs font-bold text-white">{user.name}</span>
                         </div>
+
+                        {/* 保存ステータス + 強制保存ボタン */}
+                        {saveStatus === 'restoring' && (
+                            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-bold"
+                                style={{ background: 'rgba(59,130,246,0.12)', color: '#60a5fa' }}>
+                                <RefreshCw className="w-3 h-3 animate-spin" /> SQLから復元中...
+                            </div>
+                        )}
+                        {saveStatus === 'saving' && (
+                            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-bold"
+                                style={{ background: 'rgba(234,179,8,0.12)', color: '#fbbf24' }}>
+                                <RefreshCw className="w-3 h-3 animate-spin" /> 保存中...
+                            </div>
+                        )}
+                        {saveStatus === 'saved' && (
+                            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-bold"
+                                style={{ background: 'rgba(34,197,94,0.12)', color: '#4ade80' }}>
+                                <Cloud className="w-3 h-3" /> 保存済み
+                            </div>
+                        )}
+                        {saveStatus === 'error' && (
+                            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-bold cursor-pointer"
+                                style={{ background: 'rgba(239,68,68,0.12)', color: '#f87171' }}
+                                title={saveErrorMsg}
+                                onClick={handleForceSave}
+                            >
+                                <CloudOff className="w-3 h-3" /> 保存失敗（クリックで再試行）
+                            </div>
+                        )}
+                        {isAdmin && (
+                            <button
+                                onClick={handleForceSave}
+                                disabled={saveStatus === 'saving' || saveStatus === 'restoring'}
+                                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-[10px] font-black transition-all hover:opacity-80 disabled:opacity-40"
+                                style={{ background: 'rgba(34,197,94,0.15)', color: '#4ade80' }}
+                                title="プロジェクトデータをSQLに強制保存"
+                            >
+                                <Save className="w-3.5 h-3.5" />
+                                <span className="hidden sm:inline">強制保存</span>
+                            </button>
+                        )}
 
                         {isAdmin && (
                             <button

@@ -46,6 +46,33 @@ if ($method === 'GET') {
     $action = $_GET['action'] ?? 'get_all';
     $sheet_name = $_GET['sheetName'] ?? 'default';
 
+    // ポータルプロジェクト一覧取得（goalEpics含む完全データ）
+    if ($action === 'get_portal_projects') {
+        try {
+            $pdo->exec("CREATE TABLE IF NOT EXISTS portal_settings (
+                setting_key VARCHAR(100) PRIMARY KEY,
+                setting_value LONGTEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            $stmt = $pdo->prepare("SELECT setting_value, updated_at FROM portal_settings WHERE setting_key = 'portal_projects' LIMIT 1");
+            $stmt->execute();
+            $row = $stmt->fetch();
+            if ($row && !empty($row['setting_value'])) {
+                $projects = json_decode($row['setting_value'], true);
+                echo json_encode([
+                    'status' => 'success',
+                    'projects' => is_array($projects) ? $projects : [],
+                    'updatedAt' => $row['updated_at'],
+                ]);
+            } else {
+                echo json_encode(['status' => 'success', 'projects' => []]);
+            }
+        } catch (Exception $e) {
+            echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
+        }
+        exit;
+    }
+
     // ゴールエピック一覧取得（部署+年度でフィルタ可能）
     if ($action === 'get_goal_epics') {
         $dept       = $_GET['department'] ?? '';
@@ -417,6 +444,23 @@ if ($method === 'POST') {
             }
             $pdo->commit();
             echo json_encode(['status' => 'success', 'inserted' => count($epics)]);
+            exit;
+        }
+
+        // ポータルプロジェクト一覧保存（goalEpics含む完全データ）
+        if ($action === 'save_portal_projects') {
+            $projects = $data['projects'] ?? [];
+            $pdo->exec("CREATE TABLE IF NOT EXISTS portal_settings (
+                setting_key VARCHAR(100) PRIMARY KEY,
+                setting_value LONGTEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            $stmt = $pdo->prepare(
+                "INSERT INTO portal_settings (setting_key, setting_value) VALUES ('portal_projects', :val)
+                 ON DUPLICATE KEY UPDATE setting_value = :val, updated_at = CURRENT_TIMESTAMP"
+            );
+            $stmt->execute([':val' => json_encode($projects, JSON_UNESCAPED_UNICODE)]);
+            echo json_encode(['status' => 'success', 'savedCount' => count($projects)]);
             exit;
         }
 

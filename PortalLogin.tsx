@@ -226,14 +226,34 @@ const PortalLogin: React.FC<PortalLoginProps> = ({ onLogin }) => {
                         <button
                             type="button"
                             onClick={() => {
-                                if (window.confirm('ポータルの設定を初期化しますか？（作成した全てのプロジェクトやユーザー設定が消去されます）')) {
-                                    localStorage.clear();
-                                    window.location.reload();
+                                if (!window.confirm('ポータルのログイン設定を初期化しますか？\n\n⚠️ プロジェクト・タスク・目標データは消去されません。\nログインユーザー設定のみリセットされます。')) return;
+                                // プロジェクトデータを保護しながらログイン設定のみクリア
+                                const keysToKeep: string[] = [];
+                                for (let i = 0; i < localStorage.length; i++) {
+                                    const key = localStorage.key(i);
+                                    if (key && (
+                                        key.startsWith('portal_projects') ||
+                                        key.startsWith('portal_team_members') ||
+                                        key.startsWith('project_') ||
+                                        key.startsWith('board_')
+                                    )) {
+                                        keysToKeep.push(key);
+                                    }
                                 }
+                                const savedData: Record<string, string> = {};
+                                keysToKeep.forEach(key => {
+                                    savedData[key] = localStorage.getItem(key) || '';
+                                });
+                                localStorage.clear();
+                                // 保護したデータを書き戻す
+                                Object.entries(savedData).forEach(([key, val]) => {
+                                    if (val) localStorage.setItem(key, val);
+                                });
+                                window.location.reload();
                             }}
                             className="text-[9px] text-slate-700 hover:text-red-400 font-bold transition-colors underline underline-offset-4 opacity-50 hover:opacity-100"
                         >
-                            データを初期化して最初からやり直す
+                            ログイン設定を初期化（プロジェクトデータは保持）
                         </button>
                     </div>
                 </div>

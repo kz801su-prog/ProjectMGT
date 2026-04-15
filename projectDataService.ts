@@ -202,6 +202,26 @@ export function clearProjectData(projectId: string): void {
 }
 
 // =========================================================
+// グローバルチームメンバー管理 (ログインユーザーとは独立)
+// =========================================================
+
+/** グローバルチームメンバー一覧を取得 */
+export function getGlobalTeamMembers(): MemberInfo[] {
+    const saved = localStorage.getItem(`${PORTAL_PREFIX}team_members`);
+    if (saved) {
+        try {
+            return JSON.parse(saved);
+        } catch { }
+    }
+    return [];
+}
+
+/** グローバルチームメンバー一覧を保存 */
+export function saveGlobalTeamMembers(members: MemberInfo[]): void {
+    localStorage.setItem(`${PORTAL_PREFIX}team_members`, JSON.stringify(members));
+}
+
+// =========================================================
 // バックアップ
 // =========================================================
 

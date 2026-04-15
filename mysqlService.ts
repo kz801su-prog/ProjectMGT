@@ -215,6 +215,46 @@ export const savePortalUsers = async (apiUrl: string, users: PortalUserFromSheet
   }
 };
 
+/** portal_projects をSQLに全件保存（goalEpics含む完全データ）*/
+export const savePortalProjectsToSql = async (
+  apiUrl: string,
+  projects: any[]
+): Promise<boolean> => {
+  if (!apiUrl) throw new Error('API URL not set');
+  try {
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      body: JSON.stringify({ action: 'save_portal_projects', projects }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const result = await response.json();
+    if (result.status !== 'success') throw new Error(result.message || 'portal_projects保存失敗');
+    return true;
+  } catch (error: any) {
+    console.error('savePortalProjectsToSql failed:', error);
+    throw error;
+  }
+};
+
+/** SQLからportal_projectsを取得（localStorage空の時の復元用）*/
+export const loadPortalProjectsFromSql = async (
+  apiUrl: string
+): Promise<{ projects: any[]; updatedAt?: string } | null> => {
+  if (!apiUrl) return null;
+  try {
+    const url = `${apiUrl}${apiUrl.includes('?') ? '&' : '?'}action=get_portal_projects`;
+    const response = await fetch(url);
+    const result = await response.json();
+    if (result.status === 'success') {
+      return { projects: result.projects || [], updatedAt: result.updatedAt };
+    }
+    return null;
+  } catch (error: any) {
+    console.error('loadPortalProjectsFromSql failed:', error);
+    return null;
+  }
+};
+
 /** goal_epics テーブルに部署+役職単位で一括保存（洗い替え） */
 export const saveGoalEpicsToSql = async (
   apiUrl: string,

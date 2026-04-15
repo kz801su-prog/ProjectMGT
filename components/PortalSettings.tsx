@@ -2,11 +2,12 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { X, UserPlus, Trash2, Shield, Users, Award, Star, Save, Download, Upload, Key, Loader2, Edit2, Check, RefreshCw, FileCode, Copy, AlertTriangle, BarChart3, TrendingUp, Target, FileSpreadsheet, ChevronDown, ChevronRight } from 'lucide-react';
 import { PortalUser, ProjectMeta, getHalfYearPeriods, getCurrentHalfYear, getProjectPeriodLabel, getFiscalYearOptions } from '../portalTypes';
-import { createFullBackup, restoreFromBackup, getProjectTasks, getProjectMembers } from '../projectDataService';
+import { createFullBackup, restoreFromBackup, getProjectTasks, getProjectMembers, getGlobalTeamMembers, saveGlobalTeamMembers } from '../projectDataService';
 import { fetchPortalUsers, savePortalUsers as savePortalUsersToSheet, PortalUserFromSheet } from '../mysqlService';
 import { DEFAULT_GAS_URL } from '../constants';
-import { TaskStatus } from '../types';
+import { TaskStatus, MemberInfo } from '../types';
 import GAS_CODE from '../server/Code.js?raw';
+import MemberManagement from './MemberManagement';
 
 interface PortalSettingsProps {
     onClose: () => void;
@@ -106,7 +107,8 @@ function calculatePortalEvaluation(projects: ProjectMeta[]): MemberTotalScore[] 
 const PortalSettings: React.FC<PortalSettingsProps> = ({
     onClose, projects, onUpdateProject, currentUser, gasUrl, onUpdateGasUrl
 }) => {
-    const [activeTab, setActiveTab] = useState<'users' | 'evaluation' | 'results' | 'backup' | 'gas' | 'goal_epics'>('users');
+    const [activeTab, setActiveTab] = useState<'users' | 'team_members' | 'evaluation' | 'results' | 'backup' | 'gas' | 'goal_epics'>('users');
+    const [teamMembers, setTeamMembers] = useState<MemberInfo[]>(() => getGlobalTeamMembers());
     const [expandedEpicDept, setExpandedEpicDept] = useState<string | null>(null);
     const [users, setUsers] = useState<PortalUserFromSheet[]>([]);
     const [loading, setLoading] = useState(false);
@@ -309,9 +311,16 @@ const PortalSettings: React.FC<PortalSettingsProps> = ({
         return deptOrder.map(dept => ({ dept, projects: deptMap.get(dept)! }));
     }, [projects]);
 
+    // チームメンバー保存ハンドラ
+    const handleSaveTeamMembers = useCallback((updated: MemberInfo[]) => {
+        setTeamMembers(updated);
+        saveGlobalTeamMembers(updated);
+    }, []);
+
     // タブ定義
     const tabs = [
         { key: 'users' as const, label: 'ユーザー管理', icon: <Users className="w-4 h-4" /> },
+        { key: 'team_members' as const, label: 'チームメンバー', icon: <UserPlus className="w-4 h-4" /> },
         { key: 'evaluation' as const, label: 'プロジェクト評価', icon: <Award className="w-4 h-4" /> },
         { key: 'results' as const, label: '評価結果', icon: <BarChart3 className="w-4 h-4" /> },
         { key: 'goal_epics' as const, label: '目標エピック', icon: <FileSpreadsheet className="w-4 h-4" /> },
@@ -493,6 +502,29 @@ const PortalSettings: React.FC<PortalSettingsProps> = ({
                                     )}
                                 </div>
                             )}
+                        </>
+                    )}
+
+                    {/* ==================== チームメンバー管理 ==================== */}
+                    {activeTab === 'team_members' && (
+                        <>
+                            <div className="p-4 rounded-2xl flex items-start gap-3"
+                                style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.15)' }}
+                            >
+                                <UserPlus className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+                                <div>
+                                    <p className="text-xs text-red-300 font-black mb-1">チームメンバーマスター</p>
+                                    <p className="text-xs text-red-300/70 font-bold leading-relaxed">
+                                        ログインアカウントとは独立したメンバー一覧です。エピック・タスクの担当者選択に使われます。<br />
+                                        CSVで一括インポートするか、手動で追加してください。毎期の獲得点数とプロジェクトごとの評価点数も記録できます。
+                                    </p>
+                                </div>
+                            </div>
+                            <MemberManagement
+                                members={teamMembers}
+                                onSave={handleSaveTeamMembers}
+                                darkMode={true}
+                            />
                         </>
                     )}
 
