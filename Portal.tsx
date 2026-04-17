@@ -7,8 +7,9 @@ import {
     Save, CloudOff, Cloud, RefreshCw
 } from 'lucide-react';
 import { PortalUser, ProjectMeta, GoalEpic, PROJECT_COLORS, PROJECT_ICONS, getCurrentHalfYear, getProjectPeriodLabel, getFiscalYearOptions } from './portalTypes';
-import { getProjects, saveProjects, sortProjects, addProject as addProjectToStore, updateProject as updateProjectInStore, deleteProject as deleteProjectFromStore, saveProjectEpics } from './projectDataService';
-import { createProjectSheet, saveEpicsToSheet, saveGoalEpicsToSql, savePortalProjectsToSql, loadPortalProjectsFromSql } from './mysqlService';
+import { MemberInfo } from './types';
+import { getProjects, saveProjects, sortProjects, addProject as addProjectToStore, updateProject as updateProjectInStore, deleteProject as deleteProjectFromStore, saveProjectEpics, getPortalUsers, getGlobalTeamMembers, saveGlobalTeamMembers } from './projectDataService';
+import { createProjectSheet, saveEpicsToSheet, saveGoalEpicsToSql, savePortalProjectsToSql, loadPortalProjectsFromSql, fetchTeamMembersFromSql } from './mysqlService';
 import { DEFAULT_GAS_URL } from './constants';
 import ProjectCard from './components/ProjectCard';
 import BenchmarkView from './components/BenchmarkView';
@@ -20,32 +21,11 @@ interface PortalProps {
     user: PortalUser;
     onOpenProject: (projectId: string) => void;
     onLogout: () => void;
+    onTeamMembersLoaded?: (members: MemberInfo[]) => void;
 }
 
-const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
-    const [projects, setProjects] = useState<ProjectMeta[]>(() => {
-        const existing = getProjects();
-        // 初回起動: SincolLeatherが未登録なら自動登録
-        const hasSincol = existing.some(p => p.sheetName === '決定事項' || p.name === 'SincolLeather');
-        if (!hasSincol) {
-            const sincolProject: ProjectMeta = {
-                id: `proj-sincol-leather`,
-                name: 'SincolLeather',
-                description: 'Sincol Leather 2027 - 既存プロジェクト',
-                createdAt: '2026-01-01T00:00:00Z',
-                updatedAt: new Date().toISOString(),
-                isPinned: true,
-                status: 'active',
-                color: '#ef4444',
-                icon: '🏭',
-                members: [],
-                sheetName: '決定事項', // 既存のシート名
-            };
-            const updated = addProjectToStore(sincolProject);
-            return updated;
-        }
-        return existing;
-    });
+const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout, onTeamMembersLoaded }) => {
+    const [projects, setProjects] = useState<ProjectMeta[]>(() => getProjects());
 
     const [gasUrl, setGasUrl] = useState(() => localStorage.getItem('board_gas_url') || DEFAULT_GAS_URL);
     const [viewMode, setViewMode] = useState<'projects' | 'benchmark' | 'executive'>(() =>
@@ -56,6 +36,11 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
     const [showSettings, setShowSettings] = useState(false);
     const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
     const [editingProject, setEditingProject] = useState<ProjectMeta | null>(null);
+    // ポータルユーザー一覧（設定が変更されたとき再読み込み）
+    const [portalUsers, setPortalUsers] = useState(() => getPortalUsers());
+
+    // 社員マスター（全プロジェクト共通 — SQLを正とし、起動時に同期）
+    const [globalTeamMembers, setGlobalTeamMembers] = useState<MemberInfo[]>(() => getGlobalTeamMembers() as MemberInfo[]);
 
     // ======================================================
     // 自動保存・強制保存ステータス
@@ -149,6 +134,22 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    // 起動時: SQLから社員マスターを読み込みlocalStorageへキャッシュ
+    useEffect(() => {
+        fetchTeamMembersFromSql(effectiveGasUrl).then(sqlMembers => {
+            if (sqlMembers && sqlMembers.length > 0) {
+                saveGlobalTeamMembers(sqlMembers);
+                setGlobalTeamMembers(sqlMembers as MemberInfo[]);
+                onTeamMembersLoaded?.(sqlMembers as MemberInfo[]);
+                console.log('[Portal] SQLから社員マスター読み込み:', sqlMembers.length, '件');
+            }
+        }).catch(e => {
+            console.warn('[Portal] 社員マスターSQLロード失敗 (localStorageにフォールバック):', e);
+        });
+    // 初回のみ実行
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     // 強制保存ハンドラ（ボタン用）
     const handleForceSave = useCallback(async () => {
         if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
@@ -168,6 +169,30 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
     const isAdmin = user.role === 'admin';
     const isManager = user.role === 'manager';
     const isExecutive = user.role === 'executive';
+
+    // プロジェクトに入場できるかどうかを判定
+    // admin / executive → 全プロジェクト入場可
+    // manager → 自部門プロジェクト + allowedProjectIds
+    // user → allowedProjectIds に含まれるプロジェクトのみ
+    const canOpenProject = useCallback((project: ProjectMeta): boolean => {
+        if (isAdmin || isExecutive) return true;
+        if (isManager && user.department && project.department === user.department) return true;
+        if (user.allowedProjectIds && user.allowedProjectIds.includes(project.id)) return true;
+        return false;
+    }, [isAdmin, isExecutive, isManager, user.department, user.allowedProjectIds]);
+
+    // 部門ごとの担当部長名マップ（ProjectCardに渡すため）
+    const managersByDept = useMemo(() => {
+        const map = new Map<string, string[]>();
+        portalUsers
+            .filter(u => u.role === 'manager' && u.department)
+            .forEach(u => {
+                const dept = u.department!;
+                if (!map.has(dept)) map.set(dept, []);
+                map.get(dept)!.push(u.name);
+            });
+        return map;
+    }, [portalUsers]);
 
     // フィルタリングされたプロジェクト一覧
     const filteredProjects = useMemo(() => {
@@ -198,6 +223,7 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
             );
         }
 
+        // 全ログインユーザーが全プロジェクトを閲覧可能（入場制限は ProjectCard 側で制御）
         return sorted;
     }, [projects, searchTerm, filterYear, filterPeriod, filterStatus]);
 
@@ -478,7 +504,7 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
                                 title="プロジェクトデータをSQLに強制保存"
                             >
                                 <Save className="w-3.5 h-3.5" />
-                                <span className="hidden sm:inline">強制保存</span>
+                                強制保存
                             </button>
                         )}
 
@@ -544,12 +570,19 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
                     </h2>
                     <p className="text-sm text-slate-500 font-bold">
                         {viewMode === 'projects'
-                            ? `${projects.length}件のプロジェクトを管理中${hasActiveFilters ? ` (${filteredProjects.length}件表示中)` : ''}`
+                            ? `${projects.length}件のプロジェクト${hasActiveFilters ? ` (${filteredProjects.length}件表示中)` : ''}`
                             : viewMode === 'executive'
                                 ? '部署別・期別の進捗状況とエピック評価一覧'
                                 : '全プロジェクト横断の個人ポイントランキング'
                         }
                     </p>
+                    {!isExecutive && !isAdmin && !isManager && viewMode === 'projects' && (
+                        <div className="flex items-center gap-2 mt-1">
+                            <span className="text-xs text-slate-500 font-bold">
+                                閲覧のみ — プロジェクトを開くには部長以上の権限または個別許可が必要です
+                            </span>
+                        </div>
+                    )}
                 </div>
 
                 {/* ツールバー */}
@@ -755,6 +788,8 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
                                                             onEdit={handleEditProject}
                                                             onDelete={handleDeleteProject}
                                                             isAdmin={isAdmin}
+                                                            managers={project.department ? managersByDept.get(project.department) : undefined}
+                                                            canOpen={canOpenProject(project)}
                                                         />
                                                     ))}
                                                 </div>
@@ -762,6 +797,7 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
                                         }
 
                                         // 部署囲い（同一部署のプロジェクトをボックスで括る）
+                                        const deptManagers = managersByDept.get(deptKey) || [];
                                         return (
                                             <div key={deptKey} className="rounded-[2rem] p-5"
                                                 style={{
@@ -771,7 +807,7 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
                                                 }}
                                             >
                                                 {/* 部署ラベル */}
-                                                <div className="flex items-center gap-3 mb-4">
+                                                <div className="flex items-center gap-3 mb-4 flex-wrap">
                                                     <div className="px-4 py-1.5 rounded-xl text-xs font-black text-white"
                                                         style={{ background: 'linear-gradient(135deg, rgba(99,102,241,0.4), rgba(139,92,246,0.4))', border: '1px solid rgba(139,92,246,0.4)' }}
                                                     >
@@ -780,6 +816,17 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
                                                     <span className="text-[10px] text-slate-500 font-bold">
                                                         {deptProjects.length}プロジェクト
                                                     </span>
+                                                    {deptManagers.length > 0 && (
+                                                        <div className="flex items-center gap-1.5 ml-auto flex-wrap">
+                                                            <span className="text-[9px] text-slate-500 font-bold">担当部長:</span>
+                                                            {deptManagers.map((m, i) => (
+                                                                <span key={i} className="text-[10px] font-black text-blue-300 px-2 py-0.5 rounded-lg"
+                                                                    style={{ background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.25)' }}>
+                                                                    {m}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    )}
                                                 </div>
                                                 {/* 囲い内プロジェクトカード */}
                                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -792,6 +839,8 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
                                                             onEdit={handleEditProject}
                                                             onDelete={handleDeleteProject}
                                                             isAdmin={isAdmin}
+                                                            managers={deptManagers}
+                                                            canOpen={canOpenProject(project)}
                                                         />
                                                     ))}
                                                 </div>
@@ -1183,7 +1232,7 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
             {/* ポータル設定 */}
             {showSettings && isAdmin && (
                 <PortalSettings
-                    onClose={() => setShowSettings(false)}
+                    onClose={() => { setShowSettings(false); setPortalUsers(getPortalUsers()); }}
                     projects={projects}
                     onUpdateProject={handleUpdateProject}
                     currentUser={user}
@@ -1191,6 +1240,11 @@ const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout }) => {
                     onUpdateGasUrl={(url: string) => {
                         localStorage.setItem('board_gas_url', url);
                         setGasUrl(url);
+                    }}
+                    onTeamMembersUpdated={(members) => {
+                        setGlobalTeamMembers(members);
+                        saveGlobalTeamMembers(members);
+                        onTeamMembersLoaded?.(members);
                     }}
                 />
             )}

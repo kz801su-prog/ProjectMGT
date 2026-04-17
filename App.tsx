@@ -4,7 +4,7 @@ import {
   CloudUpload, BrainCircuit, X, LayoutGrid, Loader2,
   Armchair, ShieldCheck, Users, Trash2, UserPlus, Lock, CheckCircle, AlertTriangle, LogOut, Link as LinkIcon, Activity,
   FileCode, Copy, Check, Award, Briefcase, Edit2, Bell, Star, TrendingUp, Target, CheckCircle2,
-  ArrowLeft, Download, Upload, Crown, Filter, Clock
+  ArrowLeft, Download, Upload, Crown, Filter, Clock, Save, Cloud
 } from 'lucide-react';
 import { Task, TaskStatus, TaskPriority, MemberInfo, TaskComment, ProjectConcept, Attachment } from './types';
 import { fetchTasksFromSheet, syncAllTasksToSheet, saveSingleTaskToSheet, saveProjectConceptToSheet, saveEpicsToSheet, saveGoalEpicsToSql } from './mysqlService';
@@ -19,7 +19,7 @@ import { EpicListView } from './components/EpicListView';
 import { ActivityHistoryModal } from './components/ActivityHistoryModal';
 import { DEFAULT_GAS_URL, INITIAL_TASKS, DEFAULT_CLIQ_URL, MEMBERS as INITIAL_MEMBERS, ADMIN_USER_NAME, SHEET_GID, DEFAULT_PROJECTS } from './constants';
 import { PortalUser, getProjectPeriodLabel, GoalEpic } from './portalTypes';
-import { getProjectGasUrl, saveProjectGasUrl, getProjectCliqUrl, saveProjectCliqUrl, getProjectPassword, saveProjectPassword, getProjects as getProjectsMeta, getProjectEpics, saveProjectEpics, getProjectMembers, saveProjectMembers, updateProject as updateProjectInStore, getGlobalTeamMembers } from './projectDataService';
+import { getProjectGasUrl, saveProjectGasUrl, getProjectCliqUrl, saveProjectCliqUrl, getProjectPassword, saveProjectPassword, getProjects as getProjectsMeta, getProjectEpics, saveProjectEpics, getProjectMembers, saveProjectMembers, updateProject as updateProjectInStore, getGlobalTeamMembers, saveGlobalTeamMembers } from './projectDataService';
 
 import GAS_CODE from './server/Code.js?raw';
 
@@ -29,9 +29,10 @@ interface AppProps {
   projectId?: string;
   portalUser?: PortalUser;
   onBackToPortal?: () => void;
+  globalTeamMembers?: MemberInfo[];
 }
 
-const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
+const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal, globalTeamMembers }) => {
   // プロジェクトメタを1回だけ取得してすべての派生値に使い回す
   const currentProjectMeta = useMemo(() =>
     projectId ? getProjectsMeta().find(p => p.id === projectId) : undefined,
@@ -112,6 +113,8 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
   }, [portalUser?.name]);
 
   const [members, setMembers] = useState<MemberInfo[]>(() => {
+    // SQLから同期済みのグローバル社員マスター（prop）を最優先で使用
+    if (globalTeamMembers && globalTeamMembers.length > 0) return globalTeamMembers;
     if (projectId) {
       const projectMembers = getProjectMembers(projectId);
       if (projectMembers.length > 0) return projectMembers;
@@ -119,7 +122,7 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
       const proj = getProjectsMeta().find(p => p.id === projectId);
       if (proj?.goalEpics && proj.goalEpics.length > 0) return [];
     }
-    // グローバルチームメンバーマスターを優先参照
+    // localStorageキャッシュのグローバルチームメンバーマスターを次の優先として参照
     const globalTeam = getGlobalTeamMembers();
     if (globalTeam.length > 0) return globalTeam;
     const saved = localStorage.getItem('board_members_v2');
@@ -131,6 +134,13 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
     }
     return INITIAL_MEMBERS;
   });
+
+  // 社員マスターpropが変化したとき（設定で更新された等）にmembers stateへ反映
+  useEffect(() => {
+    if (globalTeamMembers && globalTeamMembers.length > 0) {
+      setMembers(globalTeamMembers);
+    }
+  }, [globalTeamMembers]);
 
   const isAdmin = useMemo(() => {
     const normalize = (name: string) => name.replace(/[\s　]+/g, '');
@@ -219,6 +229,8 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
   const [editingMemberRole, setEditingMemberRole] = useState<'admin' | 'manager' | 'user' | 'executive'>('user');
   const [memberDeptFilter, setMemberDeptFilter] = useState<string>('all');
   const csvMemberInputRef = useRef<HTMLInputElement>(null);
+  const goalEpicSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const [goalEpicSaveStatus, setGoalEpicSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
   const [projectConcept, setProjectConcept] = useState<ProjectConcept>(() => {
     const saved = localStorage.getItem('board_project_concept');
@@ -365,6 +377,8 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
   }, [loadData, settings.userName]);
 
   useEffect(() => {
+    // 全プロジェクト共通のグローバルメンバーリストに保存（常に）
+    saveGlobalTeamMembers(members);
     if (projectId) {
       saveProjectMembers(projectId, members);
     } else {
@@ -426,7 +440,7 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
     }
   };
 
-  // GoalEpic フィールドを更新して localStorage に保存
+  // GoalEpic フィールドを更新して localStorage + SQL に保存
   const handleUpdateGoalEpic = useCallback((epicId: string, updates: Partial<GoalEpic>) => {
     if (!projectId) return;
     setLocalGoalEpics(prev => {
@@ -435,10 +449,59 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
       const proj = getProjectsMeta().find(p => p.id === projectId);
       if (proj) {
         updateProjectInStore({ ...proj, goalEpics: updated, updatedAt: new Date().toISOString() });
+        // SQL に debounce 保存（2秒後）
+        if (goalEpicSaveTimerRef.current) clearTimeout(goalEpicSaveTimerRef.current);
+        goalEpicSaveTimerRef.current = setTimeout(() => {
+          const sqlEpics = updated.map(e => ({
+            id: e.id, name: e.name,
+            dueDate: e.dueDate || '', goal: e.goal || '',
+            rule: e.rule || '', weight: e.weight || 0,
+            status: e.status || 'active',
+          }));
+          saveGoalEpicsToSql(
+            settings.gasUrl,
+            proj.department || '',
+            proj.evaluatorTitle || '',
+            proj.fiscalYear || new Date().getFullYear(),
+            proj.halfPeriod || 'H1',
+            sqlEpics
+          ).catch(err => console.error('[GoalEpic] SQL保存失敗:', err));
+        }, 2000);
       }
       return updated;
     });
-  }, [projectId]);
+  }, [projectId, settings.gasUrl]);
+
+  // GoalEpic を即時SQL保存（強制保存ボタン用）
+  const handleForceGoalEpicSave = useCallback(async () => {
+    if (!projectId || localGoalEpics.length === 0) return;
+    if (goalEpicSaveTimerRef.current) clearTimeout(goalEpicSaveTimerRef.current);
+    const proj = getProjectsMeta().find(p => p.id === projectId);
+    if (!proj) return;
+    setGoalEpicSaveStatus('saving');
+    const sqlEpics = localGoalEpics.map(e => ({
+      id: e.id, name: e.name,
+      dueDate: e.dueDate || '', goal: e.goal || '',
+      rule: e.rule || '', weight: e.weight || 0,
+      status: e.status || 'active',
+    }));
+    try {
+      await saveGoalEpicsToSql(
+        settings.gasUrl,
+        proj.department || '',
+        proj.evaluatorTitle || '',
+        proj.fiscalYear || new Date().getFullYear(),
+        proj.halfPeriod || 'H1',
+        sqlEpics
+      );
+      setGoalEpicSaveStatus('saved');
+      setTimeout(() => setGoalEpicSaveStatus('idle'), 3000);
+    } catch (err) {
+      console.error('[GoalEpic] 強制保存失敗:', err);
+      setGoalEpicSaveStatus('error');
+      setTimeout(() => setGoalEpicSaveStatus('idle'), 4000);
+    }
+  }, [projectId, localGoalEpics, settings.gasUrl]);
 
   const updateTaskAndSave = useCallback((taskId: string, updater: (task: Task) => Task, saveMode: 'immediate' | 'debounced' | 'none' = 'debounced') => {
     setTasks(prev => {
@@ -758,6 +821,26 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
         <span>
           {isAdmin ? `矢追様 管理者ログイン中 (評価機能 有効)` : isExecutive ? `役員: ${settings.userName}` : isManager ? `マネージャー: ${settings.userName}` : `ユーザー: ${settings.userName}`}
         </span>
+        {isAdmin && localGoalEpics.length > 0 && (
+          <button
+            onClick={handleForceGoalEpicSave}
+            disabled={goalEpicSaveStatus === 'saving'}
+            className={`ml-2 flex items-center gap-1 px-3 py-1 rounded-full text-[10px] font-black transition-all disabled:opacity-50 ${
+              goalEpicSaveStatus === 'saved' ? 'bg-green-500/30 text-green-200' :
+              goalEpicSaveStatus === 'error' ? 'bg-red-500/30 text-red-200' :
+              'bg-white/20 hover:bg-white/30'
+            }`}
+            title="目標エピックをSQLに強制保存"
+          >
+            {goalEpicSaveStatus === 'saving' ? <Loader2 className="w-3 h-3 animate-spin" /> :
+             goalEpicSaveStatus === 'saved' ? <CheckCircle className="w-3 h-3" /> :
+             goalEpicSaveStatus === 'error' ? <AlertTriangle className="w-3 h-3" /> :
+             <Save className="w-3 h-3" />}
+            {goalEpicSaveStatus === 'saving' ? '保存中...' :
+             goalEpicSaveStatus === 'saved' ? '保存済み' :
+             goalEpicSaveStatus === 'error' ? '失敗' : '強制保存'}
+          </button>
+        )}
         <button
           onClick={() => handleLogout()}
           className="ml-4 bg-white/20 hover:bg-white/30 px-3 py-1 rounded-full text-[10px] transition-all flex items-center gap-1"
@@ -1097,14 +1180,28 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
                 )}
                 {evaluatorTab === 'epics' && (
                   <div className="space-y-4">
-                    <h3 className="font-black text-sm flex items-center gap-2 text-orange-700"><Target className="w-4 h-4" /> エピック編集</h3>
+                    <h3 className="font-black text-sm flex items-center gap-2 text-orange-700"><Target className="w-4 h-4" /> エピック詳細（参照）</h3>
+                    {!isAdmin && <p className="text-[10px] text-slate-400 italic bg-slate-50 px-3 py-2 rounded-lg">※ 編集はAdmin専用です</p>}
                     {localGoalEpics.length === 0 && <p className="text-xs text-slate-400 italic">目標エピックが設定されていません</p>}
                     {localGoalEpics.map((ge, idx) => (
                       <div key={ge.id || idx} className="p-4 rounded-2xl border border-orange-100 bg-orange-50/30 space-y-3">
                         <span className="text-sm font-black text-slate-800">{ge.name}</span>
-                        <div><label className="text-[10px] font-black text-slate-400 block mb-1">期日</label><input type="date" className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:border-orange-500" value={ge.dueDate||''} onChange={e=>handleUpdateGoalEpic(ge.id,{dueDate:e.target.value})} /></div>
-                        <div><label className="text-[10px] font-black text-slate-400 block mb-1">ゴール</label><textarea className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:border-orange-500 h-14 resize-none" value={ge.goal||''} onChange={e=>handleUpdateGoalEpic(ge.id,{goal:e.target.value})} /></div>
-                        <div><label className="text-[10px] font-black text-slate-400 block mb-1">ルール</label><textarea className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:border-orange-500 h-14 resize-none" value={ge.rule||''} onChange={e=>handleUpdateGoalEpic(ge.id,{rule:e.target.value})} /></div>
+                        {ge.weight ? <span className="ml-2 text-[10px] font-black text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">配分 {ge.weight}pt</span> : null}
+                        <div><label className="text-[10px] font-black text-slate-400 block mb-1">期日</label>
+                          {isAdmin
+                            ? <input type="date" className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:border-orange-500" value={ge.dueDate||''} onChange={e=>handleUpdateGoalEpic(ge.id,{dueDate:e.target.value})} />
+                            : <p className="text-xs font-bold text-slate-700 bg-white px-2 py-1.5 rounded-lg border border-slate-100">{ge.dueDate || '—'}</p>}
+                        </div>
+                        <div><label className="text-[10px] font-black text-slate-400 block mb-1">ゴール</label>
+                          {isAdmin
+                            ? <textarea className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:border-orange-500 h-14 resize-none" value={ge.goal||''} onChange={e=>handleUpdateGoalEpic(ge.id,{goal:e.target.value})} />
+                            : <p className="text-xs text-slate-700 bg-white px-2 py-2 rounded-lg border border-slate-100 leading-relaxed">{ge.goal || '—'}</p>}
+                        </div>
+                        <div><label className="text-[10px] font-black text-slate-400 block mb-1">ルール</label>
+                          {isAdmin
+                            ? <textarea className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:border-orange-500 h-14 resize-none" value={ge.rule||''} onChange={e=>handleUpdateGoalEpic(ge.id,{rule:e.target.value})} />
+                            : <p className="text-xs text-slate-600 bg-white px-2 py-2 rounded-lg border border-slate-100 leading-relaxed">{ge.rule || '—'}</p>}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1217,15 +1314,18 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
                     </div>
                   </div>
                 )}
-                {/* エピック編集タブ */}
+                {/* エピック詳細タブ（配分・ゴール・ルールはAdmin限定編集） */}
                 {managerSettingsTab === 'epics' && (() => {
                   const totalW = localGoalEpics.reduce((s, g) => s + (g.weight || 0), 0);
                   return (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
-                      <h3 className="font-black text-sm flex items-center gap-2 text-blue-700"><Briefcase className="w-4 h-4" /> エピック編集 (合計100ポイント)</h3>
-                      <div className={`text-[10px] font-black px-3 py-1 rounded-full ${totalW === 100 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                        {totalW} / 100pt{totalW !== 100 && ' ⚠'}
+                      <h3 className="font-black text-sm flex items-center gap-2 text-blue-700"><Briefcase className="w-4 h-4" /> エピック詳細{isAdmin ? '（編集）' : '（参照）'}</h3>
+                      <div className="flex items-center gap-2">
+                        {!isAdmin && <span className="text-[10px] text-slate-400 font-bold">※ 配分・ゴール・ルールの編集はAdmin専用</span>}
+                        <div className={`text-[10px] font-black px-3 py-1 rounded-full ${totalW === 100 ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                          合計 {totalW} / 100pt
+                        </div>
                       </div>
                     </div>
                     {localGoalEpics.length === 0 && <p className="text-xs text-slate-400 italic">目標エピックが設定されていません</p>}
@@ -1234,14 +1334,28 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
                         <div className="flex items-center justify-between gap-3">
                           <span className="text-sm font-black text-slate-800">{ge.name}</span>
                           <div className="flex items-center gap-1.5 flex-shrink-0">
-                            <label className="text-[10px] font-black text-slate-500">ポイント</label>
-                            <input type="number" min="0" max="100" className="w-16 p-1.5 bg-white border border-blue-200 rounded-lg text-xs font-black text-blue-700 outline-none focus:border-blue-500 text-center" value={ge.weight} onChange={e=>handleUpdateGoalEpic(ge.id,{weight:parseInt(e.target.value)||0})} />
+                            <label className="text-[10px] font-black text-slate-500">配分</label>
+                            {isAdmin
+                              ? <input type="number" min="0" max="100" className="w-16 p-1.5 bg-white border border-blue-200 rounded-lg text-xs font-black text-blue-700 outline-none focus:border-blue-500 text-center" value={ge.weight} onChange={e=>handleUpdateGoalEpic(ge.id,{weight:parseInt(e.target.value)||0})} />
+                              : <span className="w-16 text-center text-xs font-black text-blue-700 bg-white px-2 py-1.5 rounded-lg border border-blue-100">{ge.weight}</span>}
                             <span className="text-[10px] font-black text-blue-700">pt</span>
                           </div>
                         </div>
-                        <div><label className="text-[10px] font-black text-slate-400 block mb-1">期日</label><input type="date" className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-blue-500" value={ge.dueDate||''} onChange={e=>handleUpdateGoalEpic(ge.id,{dueDate:e.target.value})} /></div>
-                        <div><label className="text-[10px] font-black text-slate-400 block mb-1">ゴール</label><textarea className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-blue-500 h-14 resize-none" value={ge.goal||''} onChange={e=>handleUpdateGoalEpic(ge.id,{goal:e.target.value})} /></div>
-                        <div><label className="text-[10px] font-black text-slate-400 block mb-1">ルール</label><textarea className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-blue-500 h-14 resize-none" value={ge.rule||''} onChange={e=>handleUpdateGoalEpic(ge.id,{rule:e.target.value})} /></div>
+                        <div><label className="text-[10px] font-black text-slate-400 block mb-1">期日</label>
+                          {isAdmin
+                            ? <input type="date" className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-blue-500" value={ge.dueDate||''} onChange={e=>handleUpdateGoalEpic(ge.id,{dueDate:e.target.value})} />
+                            : <p className="text-xs font-bold text-slate-700 bg-white px-2 py-1.5 rounded-lg border border-slate-100">{ge.dueDate || '—'}</p>}
+                        </div>
+                        <div><label className="text-[10px] font-black text-slate-400 block mb-1">ゴール</label>
+                          {isAdmin
+                            ? <textarea className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-blue-500 h-14 resize-none" value={ge.goal||''} onChange={e=>handleUpdateGoalEpic(ge.id,{goal:e.target.value})} />
+                            : <p className="text-xs text-slate-700 bg-white px-2 py-2 rounded-lg border border-slate-100 leading-relaxed">{ge.goal || '—'}</p>}
+                        </div>
+                        <div><label className="text-[10px] font-black text-slate-400 block mb-1">ルール</label>
+                          {isAdmin
+                            ? <textarea className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-blue-500 h-14 resize-none" value={ge.rule||''} onChange={e=>handleUpdateGoalEpic(ge.id,{rule:e.target.value})} />
+                            : <p className="text-xs text-slate-600 bg-white px-2 py-2 rounded-lg border border-slate-100 leading-relaxed">{ge.rule || '—'}</p>}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1403,12 +1517,32 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
                     {/* goalEpics詳細編集（Excel由来のプロジェクト） */}
                     {localGoalEpics.length > 0 && (
                       <div className="space-y-3">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between gap-2">
                           <h3 className="font-black text-sm flex items-center gap-2 text-amber-600">
                             <Target className="w-4 h-4" /> 目標エピック詳細編集
                           </h3>
-                          <div className={`text-xs font-black px-3 py-1 rounded-full ${totalWeight === 100 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                            合計ポイント: {totalWeight} / 100{totalWeight !== 100 && ' ⚠ 合計が100になるよう調整してください'}
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <div className={`text-xs font-black px-3 py-1 rounded-full ${totalWeight === 100 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                              合計: {totalWeight} / 100{totalWeight !== 100 && ' ⚠'}
+                            </div>
+                            <button
+                              onClick={handleForceGoalEpicSave}
+                              disabled={goalEpicSaveStatus === 'saving'}
+                              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-black transition-all ${
+                                goalEpicSaveStatus === 'saving' ? 'bg-slate-100 text-slate-400 cursor-not-allowed' :
+                                goalEpicSaveStatus === 'saved' ? 'bg-green-100 text-green-700' :
+                                goalEpicSaveStatus === 'error' ? 'bg-red-100 text-red-700' :
+                                'bg-amber-600 text-white hover:bg-amber-700'
+                              }`}
+                            >
+                              {goalEpicSaveStatus === 'saving' ? <Loader2 className="w-3 h-3 animate-spin" /> :
+                               goalEpicSaveStatus === 'saved' ? <CheckCircle className="w-3 h-3" /> :
+                               goalEpicSaveStatus === 'error' ? <AlertTriangle className="w-3 h-3" /> :
+                               <Save className="w-3 h-3" />}
+                              {goalEpicSaveStatus === 'saving' ? '保存中...' :
+                               goalEpicSaveStatus === 'saved' ? '保存済み' :
+                               goalEpicSaveStatus === 'error' ? '失敗' : '保存'}
+                            </button>
                           </div>
                         </div>
                         {localGoalEpics.map((ge, idx) => (
@@ -1537,11 +1671,21 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
                         <div key={epic} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100 group">
                           <span className="text-xs font-bold text-slate-700">{epic}</span>
                           <button onClick={() => {
+                            const epicName = epics[idx];
                             setEpics(prev => {
                               const next = prev.filter((_, i) => i !== idx);
                               saveEpicsToSheet(next, settings.gasUrl, currentSheetName);
                               return next;
                             });
+                            // goalEpics からも削除して復活を防ぐ
+                            if (projectId) {
+                              const updatedGoalEpics = localGoalEpics.filter(ge => ge.name !== epicName);
+                              setLocalGoalEpics(updatedGoalEpics);
+                              const proj = getProjectsMeta().find(p => p.id === projectId);
+                              if (proj) {
+                                updateProjectInStore({ ...proj, goalEpics: updatedGoalEpics, updatedAt: new Date().toISOString() });
+                              }
+                            }
                           }} className="p-1.5 text-rose-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all">
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -1770,8 +1914,9 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal }) => {
                     </div>
 
                     {/* CSVフォーマットヒント */}
-                    <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-[10px] text-blue-700 font-bold">
-                      📄 CSVフォーマット: 1行目にヘッダー「ID,事業部,部署,氏名」等を記載してください。Excelで「CSV(UTF-8)」として保存したファイルが使えます。
+                    <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-[10px] text-green-700 font-bold">
+                      🌐 このメンバー一覧は<strong>全プロジェクト共通</strong>です。ここで登録・変更すると、すべてのプロジェクトのタスクメンバー選択・ベンチマークに反映されます。<br />
+                      📄 CSVフォーマット: ヘッダー「ID, 氏名, 部署, 部門グループ（階層含む）, 役職」— 添付ファイルのフォーマット対応済。
                     </div>
 
                     {/* 手動追加 */}

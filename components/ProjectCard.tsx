@@ -1,7 +1,7 @@
 
 import React from 'react';
-import { Pin, PinOff, Calendar, Users, CheckCircle2, TrendingUp, MoreVertical, Star, Trash2, Edit2, Archive } from 'lucide-react';
-import { ProjectMeta, GoalEpic, getProjectPeriodLabel } from '../portalTypes';
+import { Pin, PinOff, Calendar, Users, TrendingUp, MoreVertical, Star, Trash2, Edit2, Briefcase, Lock } from 'lucide-react';
+import { ProjectMeta, getProjectPeriodLabel } from '../portalTypes';
 
 interface ProjectCardProps {
     project: ProjectMeta;
@@ -10,10 +10,12 @@ interface ProjectCardProps {
     onEdit: (project: ProjectMeta) => void;
     onDelete: (projectId: string) => void;
     isAdmin: boolean;
+    managers?: string[];  // 担当部長名一覧
+    canOpen?: boolean;    // false のときカードをロック（閲覧のみ）
 }
 
 const ProjectCard: React.FC<ProjectCardProps> = ({
-    project, onOpen, onTogglePin, onEdit, onDelete, isAdmin
+    project, onOpen, onTogglePin, onEdit, onDelete, isAdmin, managers, canOpen = true
 }) => {
     const [showMenu, setShowMenu] = React.useState(false);
     const menuRef = React.useRef<HTMLDivElement>(null);
@@ -40,21 +42,31 @@ const ProjectCard: React.FC<ProjectCardProps> = ({
 
     return (
         <div
-            className="group relative rounded-[2rem] overflow-hidden cursor-pointer transition-all duration-300 hover:scale-[1.02] hover:shadow-2xl"
+            className={`group relative rounded-[2rem] overflow-hidden transition-all duration-300 ${canOpen ? 'cursor-pointer hover:scale-[1.02] hover:shadow-2xl' : 'cursor-default opacity-70'}`}
             style={{
                 background: 'rgba(255,255,255,0.06)',
-                border: '1px solid rgba(255,255,255,0.08)',
+                border: canOpen ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(255,255,255,0.04)',
                 backdropFilter: 'blur(20px)',
             }}
-            onClick={() => onOpen(project.id)}
+            onClick={() => canOpen && onOpen(project.id)}
         >
             {/* カラーアクセント */}
             <div className="absolute top-0 left-0 right-0 h-1 opacity-80"
-                style={{ background: `linear-gradient(90deg, ${project.color}, transparent)` }}
+                style={{ background: `linear-gradient(90deg, ${canOpen ? project.color : '#475569'}, transparent)` }}
             />
 
+            {/* 入場不可ロックバッジ */}
+            {!canOpen && (
+                <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-xl"
+                    style={{ background: 'rgba(71,85,105,0.7)', border: '1px solid rgba(100,116,139,0.4)', backdropFilter: 'blur(4px)' }}
+                >
+                    <Lock className="w-3 h-3 text-slate-400" />
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider">閲覧のみ</span>
+                </div>
+            )}
+
             {/* ピン止めバッジ */}
-            {project.isPinned && (
+            {project.isPinned && canOpen && (
                 <div className="absolute top-4 right-4 z-10">
                     <div className="w-8 h-8 rounded-xl flex items-center justify-center"
                         style={{ background: 'rgba(251, 191, 36, 0.2)' }}
@@ -64,7 +76,7 @@ const ProjectCard: React.FC<ProjectCardProps> = ({
                 </div>
             )}
 
-            {/* メニュー */}
+            {/* メニュー（Admin のみ、入場可否に関わらず表示） */}
             {isAdmin && (
                 <div className="absolute top-4 right-4 z-20" ref={menuRef}>
                     <button
@@ -108,14 +120,17 @@ const ProjectCard: React.FC<ProjectCardProps> = ({
                 <div className="flex items-start gap-4 mb-4">
                     <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl flex-shrink-0 shadow-lg"
                         style={{
-                            background: `linear-gradient(135deg, ${project.color}22, ${project.color}44)`,
-                            border: `1px solid ${project.color}33`,
+                            background: canOpen
+                                ? `linear-gradient(135deg, ${project.color}22, ${project.color}44)`
+                                : 'rgba(71,85,105,0.2)',
+                            border: canOpen ? `1px solid ${project.color}33` : '1px solid rgba(71,85,105,0.3)',
+                            filter: canOpen ? 'none' : 'grayscale(0.5)',
                         }}
                     >
                         {project.icon}
                     </div>
                     <div className="flex-1 min-w-0">
-                        <h3 className="text-lg font-black text-white truncate group-hover:text-red-400 transition-colors">
+                        <h3 className={`text-lg font-black truncate transition-colors ${canOpen ? 'text-white group-hover:text-red-400' : 'text-slate-400'}`}>
                             {project.name}
                         </h3>
                         {project.fiscalYear && (
@@ -148,7 +163,20 @@ const ProjectCard: React.FC<ProjectCardProps> = ({
                 {/* 目標エピック配分バー */}
                 {project.goalEpics && project.goalEpics.length > 0 && (
                     <div className="mb-4">
-                        <p className="text-[9px] text-slate-500 font-bold uppercase mb-1.5">EPICS ({project.goalEpics.length})</p>
+                        <div className="flex items-center justify-between mb-1.5">
+                            <p className="text-[9px] text-slate-500 font-bold uppercase">EPICS ({project.goalEpics.length})</p>
+                            {managers && managers.length > 0 && (
+                                <div className="flex items-center gap-1 flex-wrap justify-end">
+                                    <Briefcase className="w-2.5 h-2.5 text-blue-400 flex-shrink-0" />
+                                    {managers.map((m, i) => (
+                                        <span key={i} className="text-[9px] font-black text-blue-300 px-1.5 py-0.5 rounded-md"
+                                            style={{ background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.25)' }}>
+                                            {m}
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
                         <div className="flex rounded-lg overflow-hidden h-2.5 mb-1.5" style={{ background: 'rgba(255,255,255,0.04)' }}>
                             {project.goalEpics.map((epic, idx) => {
                                 const colors = ['#ef4444', '#f59e0b', '#22c55e', '#3b82f6', '#8b5cf6'];
@@ -158,7 +186,7 @@ const ProjectCard: React.FC<ProjectCardProps> = ({
                                             width: `${epic.weight}%`,
                                             background: epic.status === 'completed'
                                                 ? `${colors[idx % colors.length]}cc`
-                                                : `${colors[idx % colors.length]}66`,
+                                                : `${colors[idx % colors.length]}${canOpen ? '66' : '33'}`,
                                         }}
                                         title={`${epic.name}: ${epic.weight}%${epic.score ? ` (${epic.score}点)` : ''}`}
                                     />
@@ -169,7 +197,8 @@ const ProjectCard: React.FC<ProjectCardProps> = ({
                             {project.goalEpics.map((epic, idx) => {
                                 const colors = ['#ef4444', '#f59e0b', '#22c55e', '#3b82f6', '#8b5cf6'];
                                 return (
-                                    <span key={epic.id} className="text-[8px] font-bold flex items-center gap-1" style={{ color: colors[idx % colors.length] }}>
+                                    <span key={epic.id} className="text-[8px] font-bold flex items-center gap-1"
+                                        style={{ color: canOpen ? colors[idx % colors.length] : '#475569' }}>
                                         {epic.status === 'completed' ? '✓' : '•'} {epic.name} ({epic.weight}%)
                                     </span>
                                 );
@@ -204,12 +233,14 @@ const ProjectCard: React.FC<ProjectCardProps> = ({
                 </div>
             </div>
 
-            {/* ホバーグロウ */}
-            <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none rounded-[2rem]"
-                style={{
-                    background: `radial-gradient(circle at 50% 50%, ${project.color}08, transparent)`,
-                }}
-            />
+            {/* ホバーグロウ（入場可能な場合のみ） */}
+            {canOpen && (
+                <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none rounded-[2rem]"
+                    style={{
+                        background: `radial-gradient(circle at 50% 50%, ${project.color}08, transparent)`,
+                    }}
+                />
+            )}
         </div>
     );
 };

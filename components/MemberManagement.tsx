@@ -449,19 +449,21 @@ const MemberManagement: React.FC<Props> = ({ members, onSave, darkMode = true })
                                                 <span className="text-sm font-black" style={{ color: textMain }}>{m.name}</span>
                                                 {m.employeeId && (
                                                     <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md" style={{ background: 'rgba(100,116,139,0.15)', color: textSub }}>
-                                                        {m.employeeId}
+                                                        #{m.employeeId}
+                                                    </span>
+                                                )}
+                                                {m.position && (
+                                                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(251,191,36,0.15)', color: '#fbbf24' }}>
+                                                        {m.position}
                                                     </span>
                                                 )}
                                                 <span className="text-[10px] font-black px-2 py-0.5 rounded-full text-white"
                                                     style={{ background: ROLE_COLORS[m.role] }}>
                                                     {ROLE_LABELS[m.role]}
                                                 </span>
-                                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md"
-                                                    style={{ background: 'rgba(100,116,139,0.1)', color: textSub }}>
-                                                    {TYPE_LABELS[m.type]}
-                                                </span>
                                             </div>
                                             <div className="flex gap-3 mt-0.5 text-[11px] flex-wrap" style={{ color: textSub }}>
+                                                {m.businessUnit && <span className="font-bold">{m.businessUnit}</span>}
                                                 {m.department && <span>{m.department}</span>}
                                                 {m.email && <span>{m.email}</span>}
                                                 {totalPeriodPoints > 0 && (
@@ -723,9 +725,12 @@ const MemberForm: React.FC<MemberFormProps> = ({ form, onChange, textMain, textS
                     className={inputClass} style={{ ...inputStyle, minWidth: 100 }} />
                 <input type="text" placeholder="社員ID" value={form.employeeId || ''}
                     onChange={e => onChange({ ...form, employeeId: e.target.value })}
-                    className={inputClass} style={{ ...inputStyle, width: 90 }} />
+                    className={inputClass} style={{ ...inputStyle, width: 80 }} />
                 <input type="text" placeholder="部署" value={form.department || ''}
                     onChange={e => onChange({ ...form, department: e.target.value })}
+                    className={inputClass} style={{ ...inputStyle, minWidth: 80 }} />
+                <input type="text" placeholder="役職 (例: 課長A)" value={form.position || ''}
+                    onChange={e => onChange({ ...form, position: e.target.value })}
                     className={inputClass} style={{ ...inputStyle, minWidth: 90 }} />
                 <select value={form.role} onChange={e => onChange({ ...form, role: e.target.value as MemberInfo['role'] })}
                     className={inputClass} style={{ ...inputStyle, minWidth: 90 }}>
@@ -733,11 +738,6 @@ const MemberForm: React.FC<MemberFormProps> = ({ form, onChange, textMain, textS
                     <option value="manager">マネージャー</option>
                     <option value="executive">役員</option>
                     <option value="admin">管理者</option>
-                </select>
-                <select value={form.type} onChange={e => onChange({ ...form, type: e.target.value as MemberInfo['type'] })}
-                    className={inputClass} style={{ ...inputStyle, width: 80 }}>
-                    <option value="internal">社内</option>
-                    <option value="external">外部</option>
                 </select>
             </div>
         );
@@ -753,24 +753,30 @@ const MemberForm: React.FC<MemberFormProps> = ({ form, onChange, textMain, textS
             </div>
             <div>
                 <label className="text-[10px] font-black mb-1 block" style={{ color: textSub }}>社員ID</label>
-                <input type="text" placeholder="EMP001" value={form.employeeId || ''}
+                <input type="text" placeholder="2001" value={form.employeeId || ''}
                     onChange={e => onChange({ ...form, employeeId: e.target.value })}
                     className={inputClass} style={inputStyle} />
             </div>
             <div>
-                <label className="text-[10px] font-black mb-1 block" style={{ color: textSub }}>メールアドレス</label>
-                <input type="email" placeholder="name@example.com" value={form.email}
-                    onChange={e => onChange({ ...form, email: e.target.value })}
-                    className={inputClass} style={inputStyle} />
-            </div>
-            <div>
                 <label className="text-[10px] font-black mb-1 block" style={{ color: textSub }}>部署</label>
-                <input type="text" placeholder="営業部" value={form.department || ''}
+                <input type="text" placeholder="管理本部" value={form.department || ''}
                     onChange={e => onChange({ ...form, department: e.target.value })}
                     className={inputClass} style={inputStyle} />
             </div>
             <div>
-                <label className="text-[10px] font-black mb-1 block" style={{ color: textSub }}>役職</label>
+                <label className="text-[10px] font-black mb-1 block" style={{ color: textSub }}>部門グループ</label>
+                <input type="text" placeholder="OEM営業課" value={form.businessUnit || ''}
+                    onChange={e => onChange({ ...form, businessUnit: e.target.value })}
+                    className={inputClass} style={inputStyle} />
+            </div>
+            <div>
+                <label className="text-[10px] font-black mb-1 block" style={{ color: textSub }}>役職（フリーテキスト）</label>
+                <input type="text" placeholder="一般 / 課長A / 部長" value={form.position || ''}
+                    onChange={e => onChange({ ...form, position: e.target.value })}
+                    className={inputClass} style={inputStyle} />
+            </div>
+            <div>
+                <label className="text-[10px] font-black mb-1 block" style={{ color: textSub }}>システムロール</label>
                 <select value={form.role} onChange={e => onChange({ ...form, role: e.target.value as MemberInfo['role'] })}
                     className={inputClass} style={inputStyle}>
                     <option value="user">スタッフ</option>
@@ -778,6 +784,12 @@ const MemberForm: React.FC<MemberFormProps> = ({ form, onChange, textMain, textS
                     <option value="executive">役員</option>
                     <option value="admin">管理者</option>
                 </select>
+            </div>
+            <div>
+                <label className="text-[10px] font-black mb-1 block" style={{ color: textSub }}>メールアドレス</label>
+                <input type="email" placeholder="name@example.com" value={form.email}
+                    onChange={e => onChange({ ...form, email: e.target.value })}
+                    className={inputClass} style={inputStyle} />
             </div>
             <div>
                 <label className="text-[10px] font-black mb-1 block" style={{ color: textSub }}>タイプ</label>

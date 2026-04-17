@@ -1,9 +1,9 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { X, UserPlus, Trash2, Shield, Users, Award, Star, Save, Download, Upload, Key, Loader2, Edit2, Check, RefreshCw, FileCode, Copy, AlertTriangle, BarChart3, TrendingUp, Target, FileSpreadsheet, ChevronDown, ChevronRight } from 'lucide-react';
+import { X, UserPlus, Trash2, Shield, Users, Award, Star, Save, Download, Upload, Key, Loader2, Edit2, Check, RefreshCw, FileCode, Copy, AlertTriangle, BarChart3, TrendingUp, Target, FileSpreadsheet, ChevronDown, ChevronRight, FolderOpen } from 'lucide-react';
 import { PortalUser, ProjectMeta, getHalfYearPeriods, getCurrentHalfYear, getProjectPeriodLabel, getFiscalYearOptions } from '../portalTypes';
 import { createFullBackup, restoreFromBackup, getProjectTasks, getProjectMembers, getGlobalTeamMembers, saveGlobalTeamMembers } from '../projectDataService';
-import { fetchPortalUsers, savePortalUsers as savePortalUsersToSheet, PortalUserFromSheet } from '../mysqlService';
+import { fetchPortalUsers, savePortalUsers as savePortalUsersToSheet, PortalUserFromSheet, fetchTeamMembersFromSql, saveTeamMembersToSql } from '../mysqlService';
 import { DEFAULT_GAS_URL } from '../constants';
 import { TaskStatus, MemberInfo } from '../types';
 import GAS_CODE from '../server/Code.js?raw';
@@ -16,6 +16,7 @@ interface PortalSettingsProps {
     currentUser: PortalUser;
     gasUrl: string;
     onUpdateGasUrl: (url: string) => void;
+    onTeamMembersUpdated?: (members: MemberInfo[]) => void; // 社員マスター更新時のコールバック
 }
 
 // =========================================================
@@ -105,15 +106,18 @@ function calculatePortalEvaluation(projects: ProjectMeta[]): MemberTotalScore[] 
 }
 
 const PortalSettings: React.FC<PortalSettingsProps> = ({
-    onClose, projects, onUpdateProject, currentUser, gasUrl, onUpdateGasUrl
+    onClose, projects, onUpdateProject, currentUser, gasUrl, onUpdateGasUrl, onTeamMembersUpdated
 }) => {
-    const [activeTab, setActiveTab] = useState<'users' | 'team_members' | 'evaluation' | 'results' | 'backup' | 'gas' | 'goal_epics'>('users');
+    const [activeTab, setActiveTab] = useState<'users' | 'team_members' | 'evaluation' | 'results' | 'backup' | 'gas' | 'goal_epics'>('team_members');
     const [teamMembers, setTeamMembers] = useState<MemberInfo[]>(() => getGlobalTeamMembers());
+    const [teamMemberSaveStatus, setTeamMemberSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
+    const [teamMemberSaveError, setTeamMemberSaveError] = useState('');
     const [expandedEpicDept, setExpandedEpicDept] = useState<string | null>(null);
     const [users, setUsers] = useState<PortalUserFromSheet[]>([]);
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
     const [editingIdx, setEditingIdx] = useState<number | null>(null);
+    const [expandedUserProjectIdx, setExpandedUserProjectIdx] = useState<number | null>(null);
     const [userSaveStatus, setUserSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
     const [userSaveErrorMsg, setUserSaveErrorMsg] = useState('');
     const [localGasUrl, setLocalGasUrl] = useState(gasUrl);
@@ -189,6 +193,18 @@ const PortalSettings: React.FC<PortalSettingsProps> = ({
         loadUsers();
     }, [loadUsers]);
 
+    // 社員マスターをSQLから読み込み（起動時）
+    useEffect(() => {
+        fetchTeamMembersFromSql(effectiveGasUrl).then(sqlMembers => {
+            if (sqlMembers.length > 0) {
+                setTeamMembers(sqlMembers as MemberInfo[]);
+                saveGlobalTeamMembers(sqlMembers as MemberInfo[]); // localStorageキャッシュを更新
+            }
+        }).catch(e => console.warn('社員マスターSQL読み込み失敗 (localStorage使用):', e));
+    // 初回のみ実行
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     // SQL + localStorage への共通保存処理
     const persistUsers = useCallback(async (userList: PortalUserFromSheet[]) => {
         await savePortalUsersToSheet(effectiveGasUrl, userList);
@@ -198,6 +214,7 @@ const PortalSettings: React.FC<PortalSettingsProps> = ({
             password: u.portalPassword,
             department: u.department,
             employeeId: u.employeeId,
+            allowedProjectIds: u.allowedProjectIds || [],
         }));
         localStorage.setItem('portal_users', JSON.stringify(local));
     }, [effectiveGasUrl]);
@@ -311,16 +328,27 @@ const PortalSettings: React.FC<PortalSettingsProps> = ({
         return deptOrder.map(dept => ({ dept, projects: deptMap.get(dept)! }));
     }, [projects]);
 
-    // チームメンバー保存ハンドラ
-    const handleSaveTeamMembers = useCallback((updated: MemberInfo[]) => {
+    // チームメンバー保存ハンドラ（SQL + localStorage）
+    const handleSaveTeamMembers = useCallback(async (updated: MemberInfo[]) => {
         setTeamMembers(updated);
-        saveGlobalTeamMembers(updated);
-    }, []);
+        saveGlobalTeamMembers(updated); // localStorageキャッシュ
+        setTeamMemberSaveStatus('saving');
+        setTeamMemberSaveError('');
+        try {
+            await saveTeamMembersToSql(effectiveGasUrl, updated);
+            setTeamMemberSaveStatus('success');
+            setTimeout(() => setTeamMemberSaveStatus('idle'), 3000);
+            onTeamMembersUpdated?.(updated); // 親（Portal）に通知
+        } catch (e: any) {
+            setTeamMemberSaveStatus('error');
+            setTeamMemberSaveError(e.message || 'SQL保存失敗');
+        }
+    }, [effectiveGasUrl, onTeamMembersUpdated]);
 
     // タブ定義
     const tabs = [
-        { key: 'users' as const, label: 'ユーザー管理', icon: <Users className="w-4 h-4" /> },
-        { key: 'team_members' as const, label: 'チームメンバー', icon: <UserPlus className="w-4 h-4" /> },
+        { key: 'team_members' as const, label: '社員マスター', icon: <UserPlus className="w-4 h-4" /> },
+        { key: 'users' as const, label: 'ログインユーザー', icon: <Users className="w-4 h-4" /> },
         { key: 'evaluation' as const, label: 'プロジェクト評価', icon: <Award className="w-4 h-4" /> },
         { key: 'results' as const, label: '評価結果', icon: <BarChart3 className="w-4 h-4" /> },
         { key: 'goal_epics' as const, label: '目標エピック', icon: <FileSpreadsheet className="w-4 h-4" /> },
@@ -476,21 +504,88 @@ const PortalSettings: React.FC<PortalSettingsProps> = ({
                                                     </div>
                                                 </div>
                                             ) : (
-                                                <div className="grid grid-cols-6 gap-3 items-center">
-                                                    <span className="text-xs font-bold text-slate-400">{user.employeeId || '—'}</span>
-                                                    <span className="text-xs font-bold text-white">
-                                                        {user.name}
-                                                        {user.name === currentUser.name && (<span className="ml-1 text-[8px] text-amber-400 font-black">(自分)</span>)}
-                                                    </span>
-                                                    <span className="text-xs font-bold text-slate-400">{user.department || '—'}</span>
-                                                    <span className="text-xs font-bold text-slate-500">{'•'.repeat(user.portalPassword?.length || 0) || '—'}</span>
-                                                    <span className="text-xs font-bold" style={{ color: user.role === 'admin' ? '#fbbf24' : user.role === 'manager' ? '#3b82f6' : '#94a3b8' }}>
-                                                        {user.role === 'admin' ? '👑 Admin' : user.role === 'manager' ? '📋 Manager' : '👤 User'}
-                                                    </span>
-                                                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                        <button onClick={() => setEditingIdx(idx)} className="p-2 rounded-lg text-blue-400 hover:bg-blue-500/10 transition-all"><Edit2 className="w-3.5 h-3.5" /></button>
-                                                        <button onClick={() => handleDeleteUser(idx)} className="p-2 rounded-lg text-red-400 hover:bg-red-500/10 transition-all" disabled={user.name === currentUser.name}><Trash2 className="w-3.5 h-3.5" /></button>
+                                                <div>
+                                                    <div className="grid grid-cols-6 gap-3 items-center">
+                                                        <span className="text-xs font-bold text-slate-400">{user.employeeId || '—'}</span>
+                                                        <span className="text-xs font-bold text-white">
+                                                            {user.name}
+                                                            {user.name === currentUser.name && (<span className="ml-1 text-[8px] text-amber-400 font-black">(自分)</span>)}
+                                                        </span>
+                                                        <span className="text-xs font-bold text-slate-400">{user.department || '—'}</span>
+                                                        <span className="text-xs font-bold text-slate-500">{'•'.repeat(user.portalPassword?.length || 0) || '—'}</span>
+                                                        <span className="text-xs font-bold" style={{ color: user.role === 'admin' ? '#fbbf24' : user.role === 'manager' ? '#3b82f6' : '#94a3b8' }}>
+                                                            {user.role === 'admin' ? '👑 Admin' : user.role === 'manager' ? '📋 Manager' : '👤 User'}
+                                                        </span>
+                                                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                            <button
+                                                                onClick={() => setExpandedUserProjectIdx(expandedUserProjectIdx === idx ? null : idx)}
+                                                                className="p-2 rounded-lg text-violet-400 hover:bg-violet-500/10 transition-all"
+                                                                title="閲覧プロジェクト設定"
+                                                            >
+                                                                <FolderOpen className="w-3.5 h-3.5" />
+                                                            </button>
+                                                            <button onClick={() => setEditingIdx(idx)} className="p-2 rounded-lg text-blue-400 hover:bg-blue-500/10 transition-all"><Edit2 className="w-3.5 h-3.5" /></button>
+                                                            <button onClick={() => handleDeleteUser(idx)} className="p-2 rounded-lg text-red-400 hover:bg-red-500/10 transition-all" disabled={user.name === currentUser.name}><Trash2 className="w-3.5 h-3.5" /></button>
+                                                        </div>
                                                     </div>
+                                                    {/* 閲覧許可プロジェクト チェックボックスパネル */}
+                                                    {expandedUserProjectIdx === idx && (
+                                                        <div className="mt-3 p-4 rounded-xl space-y-2"
+                                                            style={{ background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.2)' }}
+                                                        >
+                                                            <div className="flex items-center justify-between mb-2">
+                                                                <p className="text-[10px] font-black text-violet-300 flex items-center gap-2">
+                                                                    <FolderOpen className="w-3.5 h-3.5" />
+                                                                    閲覧許可プロジェクト（部門外を追加で許可）
+                                                                </p>
+                                                                <span className="text-[9px] text-slate-500 font-bold">
+                                                                    {(user.allowedProjectIds || []).length}件チェック済み
+                                                                </span>
+                                                            </div>
+                                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 max-h-56 overflow-y-auto custom-scrollbar pr-1">
+                                                                {projects.map(proj => {
+                                                                    const allowed = user.allowedProjectIds || [];
+                                                                    const isChecked = allowed.includes(proj.id);
+                                                                    const isSameDept = user.department && proj.department === user.department;
+                                                                    return (
+                                                                        <label key={proj.id}
+                                                                            className="flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-colors"
+                                                                            style={{
+                                                                                background: isChecked ? 'rgba(139,92,246,0.15)' : isSameDept ? 'rgba(59,130,246,0.08)' : 'rgba(255,255,255,0.03)',
+                                                                                border: `1px solid ${isChecked ? 'rgba(139,92,246,0.4)' : isSameDept ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.06)'}`,
+                                                                            }}
+                                                                        >
+                                                                            <input
+                                                                                type="checkbox"
+                                                                                checked={isChecked}
+                                                                                onChange={e => {
+                                                                                    const newIds = e.target.checked
+                                                                                        ? [...allowed, proj.id]
+                                                                                        : allowed.filter((id: string) => id !== proj.id);
+                                                                                    setUsers(prev => prev.map((u, i) =>
+                                                                                        i === idx ? { ...u, allowedProjectIds: newIds } : u
+                                                                                    ));
+                                                                                }}
+                                                                                className="rounded accent-violet-500"
+                                                                            />
+                                                                            <span className="text-base leading-none">{proj.icon}</span>
+                                                                            <div className="flex-1 min-w-0">
+                                                                                <p className="text-xs font-bold text-white truncate">{proj.name}</p>
+                                                                                {proj.department && (
+                                                                                    <p className="text-[9px] font-bold truncate" style={{ color: isSameDept ? '#60a5fa' : '#64748b' }}>
+                                                                                        {isSameDept ? '✓ 自部門' : proj.department}
+                                                                                    </p>
+                                                                                )}
+                                                                            </div>
+                                                                        </label>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                            {projects.length === 0 && (
+                                                                <p className="text-[10px] text-slate-500 italic text-center py-4">プロジェクトが登録されていません</p>
+                                                            )}
+                                                        </div>
+                                                    )}
                                                 </div>
                                             )}
                                         </div>
@@ -505,18 +600,37 @@ const PortalSettings: React.FC<PortalSettingsProps> = ({
                         </>
                     )}
 
-                    {/* ==================== チームメンバー管理 ==================== */}
+                    {/* ==================== 社員マスター管理 ==================== */}
                     {activeTab === 'team_members' && (
                         <>
                             <div className="p-4 rounded-2xl flex items-start gap-3"
                                 style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.15)' }}
                             >
                                 <UserPlus className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
-                                <div>
-                                    <p className="text-xs text-red-300 font-black mb-1">チームメンバーマスター</p>
+                                <div className="flex-1">
+                                    <div className="flex items-center justify-between mb-1">
+                                        <p className="text-xs text-red-300 font-black">社員マスター（評価対象の社員一覧）</p>
+                                        {teamMemberSaveStatus === 'saving' && (
+                                            <span className="flex items-center gap-1 text-[10px] font-bold text-blue-300">
+                                                <Loader2 className="w-3 h-3 animate-spin" /> SQLに保存中…
+                                            </span>
+                                        )}
+                                        {teamMemberSaveStatus === 'success' && (
+                                            <span className="flex items-center gap-1 text-[10px] font-bold text-green-400">
+                                                <Check className="w-3 h-3" /> SQLに保存完了
+                                            </span>
+                                        )}
+                                        {teamMemberSaveStatus === 'error' && (
+                                            <span className="flex items-center gap-1 text-[10px] font-bold text-red-400" title={teamMemberSaveError}>
+                                                <AlertTriangle className="w-3 h-3" /> SQL保存失敗
+                                            </span>
+                                        )}
+                                    </div>
                                     <p className="text-xs text-red-300/70 font-bold leading-relaxed">
-                                        ログインアカウントとは独立したメンバー一覧です。エピック・タスクの担当者選択に使われます。<br />
-                                        CSVで一括インポートするか、手動で追加してください。毎期の獲得点数とプロジェクトごとの評価点数も記録できます。
+                                        ログインアカウントとは独立した「評価される社員」の一覧です。<br />
+                                        タスクのメンバー追加・全プロジェクトへの反映・ベンチマーク比較に使用されます。<br />
+                                        CSVフォーマット: <span className="text-red-200">社員ID / 氏名 / 部署 / 部門グループ（階層含む）/ 役職</span><br />
+                                        「テンプレート」ボタンでサンプルCSVをダウンロードできます。
                                     </p>
                                 </div>
                             </div>

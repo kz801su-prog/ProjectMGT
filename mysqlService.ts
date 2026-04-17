@@ -7,10 +7,12 @@ export interface PortalUserFromSheet {
   department: string;
   portalPassword: string;
   role: 'admin' | 'manager' | 'user';
+  allowedProjectIds?: string[]; // 閲覧許可プロジェクトID（部門外でも見せたいプロジェクト）
 }
 
 const buildApiUrl = (apiUrl: string, params: Record<string, string>) => {
-  const query = new URLSearchParams(params).toString();
+  // _t パラメータでブラウザキャッシュをバストする（Chrome/Edge のキャッシュ差異対策）
+  const query = new URLSearchParams({ ...params, _t: Date.now().toString() }).toString();
   return `${apiUrl}${apiUrl.includes('?') ? '&' : '?'}${query}`;
 };
 
@@ -21,7 +23,7 @@ export const fetchTasksFromSheet = async (apiUrl?: string, sheetName?: string): 
 
   try {
     const fetchUrl = buildApiUrl(apiUrl, { action: 'get_all', sheetName: sheetName || 'default' });
-    const response = await fetch(fetchUrl, { signal: controller.signal });
+    const response = await fetch(fetchUrl, { signal: controller.signal, cache: 'no-store' });
     if (!response.ok) throw new Error(`API error: ${response.status}`);
     const result = await response.json();
     clearTimeout(timeoutId);
@@ -186,7 +188,7 @@ export const fetchPortalUsers = async (apiUrl: string): Promise<PortalUserFromSh
   if (!apiUrl) return [];
   try {
     const fetchUrl = buildApiUrl(apiUrl, { action: 'get_portal_users' });
-    const response = await fetch(fetchUrl);
+    const response = await fetch(fetchUrl, { cache: 'no-store' });
     if (!response.ok) return [];
     const result = await response.json();
     if (result.status === 'success') {
@@ -235,8 +237,17 @@ export const savePortalProjectsToSql = async (
     throw new Error(msg);
   }
   if (!response.ok) {
-    const msg = `[HTTPエラー] サーバーが ${response.status} を返しました`;
-    console.error('savePortalProjectsToSql http error:', response.status, await response.text().catch(() => ''));
+    // レスポンスボディからサーバー側のエラーメッセージを取得して表示する
+    let serverMsg = '';
+    try {
+      const bodyText = await response.text();
+      const bodyJson = JSON.parse(bodyText);
+      serverMsg = bodyJson.message || bodyText.slice(0, 200);
+    } catch {
+      // JSON解析失敗時はボディテキストをそのまま使う（ただし長すぎる場合は切る）
+    }
+    const msg = `[HTTPエラー] ${response.status}${serverMsg ? ' — ' + serverMsg : ''}`;
+    console.error('savePortalProjectsToSql http error:', response.status, serverMsg);
     throw new Error(msg);
   }
   let result: any;
@@ -257,8 +268,8 @@ export const loadPortalProjectsFromSql = async (
 ): Promise<{ projects: any[]; updatedAt?: string } | null> => {
   if (!apiUrl) return null;
   try {
-    const url = `${apiUrl}${apiUrl.includes('?') ? '&' : '?'}action=get_portal_projects`;
-    const response = await fetch(url);
+    const url = buildApiUrl(apiUrl, { action: 'get_portal_projects' });
+    const response = await fetch(url, { cache: 'no-store' });
     const result = await response.json();
     if (result.status === 'success') {
       return { projects: result.projects || [], updatedAt: result.updatedAt };
@@ -268,6 +279,47 @@ export const loadPortalProjectsFromSql = async (
     console.error('loadPortalProjectsFromSql failed:', error);
     return null;
   }
+};
+
+/** SQLから社員マスター（team_members）を取得 */
+export const fetchTeamMembersFromSql = async (apiUrl: string): Promise<any[]> => {
+  if (!apiUrl) return [];
+  try {
+    const url = buildApiUrl(apiUrl, { action: 'get_team_members' });
+    const response = await fetch(url, { cache: 'no-store' });
+    if (!response.ok) return [];
+    const result = await response.json();
+    if (result.status === 'success') return result.members || [];
+    return [];
+  } catch (e) {
+    console.error('fetchTeamMembersFromSql failed:', e);
+    return [];
+  }
+};
+
+/** 社員マスター（team_members）をSQLに保存 */
+export const saveTeamMembersToSql = async (apiUrl: string, members: any[]): Promise<boolean> => {
+  if (!apiUrl) throw new Error('[設定エラー] API URLが未設定です');
+  let response: Response;
+  try {
+    response = await fetch(apiUrl, {
+      method: 'POST',
+      body: JSON.stringify({ action: 'save_team_members', members }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (networkErr: any) {
+    throw new Error(`[ネットワークエラー] サーバーに接続できません — ${networkErr.message}`);
+  }
+  if (!response.ok) {
+    let serverMsg = '';
+    try { serverMsg = (await response.json()).message || ''; } catch {}
+    throw new Error(`[HTTPエラー] ${response.status}${serverMsg ? ' — ' + serverMsg : ''}`);
+  }
+  const result = await response.json();
+  if (result.status !== 'success') {
+    throw new Error(`[SQLエラー] ${result.message || 'team_members保存失敗'}`);
+  }
+  return true;
 };
 
 /** goal_epics テーブルに部署+役職単位で一括保存（洗い替え） */

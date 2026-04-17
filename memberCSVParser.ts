@@ -21,10 +21,12 @@ export interface MemberCSVParseResult {
 
 /** ヘッダー列名マッピング（日本語・英語どちらも対応） */
 const COLUMN_ALIASES: Record<string, string[]> = {
-    employeeId:   ['社員id', '社員ID', '社員番号', 'id', 'employeeid', 'employee_id'],
+    employeeId:   ['社員id', '社員ID', '社員番号', 'id', 'ID', 'employeeid', 'employee_id'],
     name:         ['名前', '氏名', 'name', '担当者名', '社員名'],
+    businessUnit: ['部門グループ', '部門グループ（階層含む）', '部門グループ(階層含む)', '事業部', 'businessunit', 'business_unit', 'division'],
     department:   ['部署', '部署名', 'department', 'dept'],
-    role:         ['役職', 'ロール', 'role'],
+    position:     ['役職', '役職名', 'position', 'title', 'job_title'],
+    role:         ['ロール', 'role', 'system_role'],
     type:         ['タイプ', '種別', 'type'],
     email:        ['メール', 'メールアドレス', 'email', 'mail'],
     periodId:     ['半期id', '半期ID', '期id', '期ID', 'period_id', 'periodid'],
@@ -51,6 +53,15 @@ function normalizeRole(val: string): MemberInfo['role'] {
     if (v === 'admin' || v === '管理者') return 'admin';
     if (v === 'manager' || v === 'マネージャー' || v === '部長' || v === 'リーダー') return 'manager';
     if (v === 'executive' || v === '役員' || v === '経営') return 'executive';
+    return 'user';
+}
+
+/** 役職テキスト（一般・課長A・部長・社長 等）からシステムロールを推定 */
+function normalizeRoleFromPosition(position: string): MemberInfo['role'] {
+    const v = position.trim();
+    if (/社長|会長|専務|常務|取締役|監査役/.test(v)) return 'executive';
+    if (/部長|課長|所長|マネージャー|主任|リーダー|代行|次長/.test(v)) return 'manager';
+    if (/管理者|admin/i.test(v)) return 'admin';
     return 'user';
 }
 
@@ -142,13 +153,23 @@ export async function parseMemberFile(file: File): Promise<MemberCSVParseResult>
 
         // 既存メンバーを取得または新規作成
         if (!memberMap.has(mapKey)) {
+            // 役職フリーテキスト（position）と、システムロール（role）を分離
+            // CSVの「役職」列は position に格納し、role は position から推定
+            const positionText = get('position');
+            const roleText = get('role');
+            const resolvedRole = roleText
+                ? normalizeRole(roleText)
+                : positionText ? normalizeRoleFromPosition(positionText) : 'user';
+
             memberMap.set(mapKey, {
                 name,
                 email: get('email'),
                 type: get('type') ? normalizeType(get('type')) : 'internal',
-                role: get('role') ? normalizeRole(get('role')) : 'user',
+                role: resolvedRole,
                 employeeId: get('employeeId') || undefined,
+                businessUnit: get('businessUnit') || undefined,
                 department: get('department') || undefined,
+                position: positionText || undefined,
                 periodPoints: [],
                 projectScores: [],
             });
@@ -231,13 +252,15 @@ export function exportMembersToCSV(members: MemberInfo[]): string {
     const rows: string[][] = [];
 
     // ヘッダー
-    rows.push(['社員ID', '名前', '部署', '役職', 'タイプ', 'メールアドレス', '半期ID', '半期獲得点数', 'プロジェクトID', 'プロジェクト名', 'プロジェクト点数']);
+    rows.push(['社員ID', '氏名', '部署', '部門グループ（階層含む）', '役職', 'ロール', 'タイプ', 'メールアドレス', '半期ID', '半期獲得点数', 'プロジェクトID', 'プロジェクト名', 'プロジェクト点数']);
 
     for (const m of members) {
         const baseRow = [
             m.employeeId || '',
             m.name,
             m.department || '',
+            m.businessUnit || '',
+            m.position || '',
             m.role,
             m.type,
             m.email,
@@ -256,7 +279,7 @@ export function exportMembersToCSV(members: MemberInfo[]): string {
             }
             // プロジェクトスコア行
             for (const ps of projects) {
-                rows.push([...baseRow, ps.periodId || '', '', ps.projectId, ps.projectName, String(ps.score)]);
+                rows.push([...baseRow, ps.periodId || '', '', ps.projectId || '', ps.projectName, String(ps.score)]);
             }
             if (periods.length === 0 && projects.length > 0) {
                 // プロジェクトだけある場合は最初の行のみ基本情報を出力済み
@@ -281,12 +304,10 @@ export function exportMembersToCSV(members: MemberInfo[]): string {
  */
 export function generateMemberCSVTemplate(): string {
     const rows: string[][] = [
-        ['社員ID', '名前', '部署', '役職', 'タイプ', 'メールアドレス', '半期ID', '半期獲得点数', 'プロジェクトID', 'プロジェクト名', 'プロジェクト点数'],
-        ['EMP001', '山田太郎', '営業部', 'user', 'internal', 'yamada@example.com', '2025-H1', '85', 'proj-1', 'プロジェクトA', '90'],
-        ['EMP001', '山田太郎', '営業部', 'user', 'internal', 'yamada@example.com', '2025-H1', '85', 'proj-2', 'プロジェクトB', '75'],
-        ['EMP001', '山田太郎', '営業部', 'user', 'internal', 'yamada@example.com', '2025-H2', '92', '', '', ''],
-        ['EMP002', '田中花子', '開発部', 'manager', 'internal', 'tanaka@example.com', '', '', '', '', ''],
-        ['EMP003', '外部パートナー', '', 'user', 'external', 'partner@example.com', '2025-H1', '60', 'proj-1', 'プロジェクトA', '70'],
+        ['社員ID', '氏名', '部署', '部門グループ（階層含む）', '役職', 'ロール', 'タイプ', 'メールアドレス', '半期ID', '半期獲得点数', 'プロジェクトID', 'プロジェクト名', 'プロジェクト点数'],
+        ['2001', '山田太郎', '営業部', '営業本部', '一般', 'user', 'internal', 'yamada@example.com', '2025-H1', '85', 'proj-1', 'プロジェクトA', '90'],
+        ['2002', '田中花子', '管理本部', '管理本部', '課長A', 'manager', 'internal', 'tanaka@example.com', '', '', '', '', ''],
+        ['2003', '佐藤次郎', '営業本部', 'OEM営業課', '部長', 'manager', 'internal', 'sato@example.com', '2025-H1', '92', '', '', ''],
     ];
 
     const csv = rows.map(row => row.join(',')).join('\r\n');

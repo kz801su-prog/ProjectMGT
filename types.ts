@@ -133,8 +133,9 @@ export interface MemberInfo {
   type: 'internal' | 'external';
   role: 'admin' | 'manager' | 'user' | 'executive';
   employeeId?: string;   // 社員ID
-  businessUnit?: string; // 事業部名
+  businessUnit?: string; // 事業部名（部門グループ）
   department?: string;   // 部署名
+  position?: string;     // 役職（フリーテキスト: 一般・課長A・部長 等）
   isLeader?: boolean;    // プロジェクトリーダー
   isEvaluator?: boolean; // 評価者（Adminが指定）
   // 実績データ

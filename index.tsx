@@ -1,10 +1,12 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import Portal from './Portal';
 import PortalLogin from './PortalLogin';
 import { PortalUser } from './portalTypes';
+import { MemberInfo } from './types';
+import { getGlobalTeamMembers } from './projectDataService';
 
 console.log("%c[SYSTEM] V13.0-MULTI-PROJECT LOADED", "color: #ef4444; font-weight: bold; font-size: 16px;");
 
@@ -14,6 +16,9 @@ type AppState =
   | { screen: 'project'; user: PortalUser; projectId: string };
 
 const Root: React.FC = () => {
+  // 社員マスター（Portal起動時にSQLから同期、設定変更時も更新）
+  const [globalTeamMembers, setGlobalTeamMembers] = useState<MemberInfo[]>(() => getGlobalTeamMembers() as MemberInfo[]);
+
   const [state, setState] = useState<AppState>(() => {
     // セッション復元: ログイン状態のみ復元（プロジェクトには自動で入らない）
     // プロジェクトへはポータル画面から手動でクリックして入る
@@ -62,6 +67,7 @@ const Root: React.FC = () => {
           user={state.user}
           onOpenProject={handleOpenProject}
           onLogout={handlePortalLogout}
+          onTeamMembersLoaded={setGlobalTeamMembers}
         />
       );
 
@@ -71,6 +77,7 @@ const Root: React.FC = () => {
           projectId={state.projectId}
           portalUser={state.user}
           onBackToPortal={handleBackToPortal}
+          globalTeamMembers={globalTeamMembers}
         />
       );
   }

@@ -20,6 +20,7 @@ export interface PortalUser {
     password?: string;      // ポータルログイン用パスワード
     department?: string;    // 部門
     employeeId?: string;    // 社員ID
+    allowedProjectIds?: string[]; // 閲覧許可プロジェクトID（部門外でも見せたいプロジェクト）
 }
 
 /** プロジェクトメタ情報 */
