@@ -932,17 +932,17 @@ const PortalSettings: React.FC<PortalSettingsProps> = ({
                                 style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
                             >
                                 <h3 className="text-sm font-black text-white flex items-center gap-2">
-                                    <FileCode className="w-4 h-4 text-emerald-400" /> GASサーバーURL設定
+                                    <FileCode className="w-4 h-4 text-emerald-400" /> MySQL APIサーバーURL設定
                                 </h3>
                                 <p className="text-xs text-slate-400 font-bold mb-2">
-                                    Google Apps Script（ウェブアプリとして公開したURL）を入力して保存してください。
+                                    MySQL APIのURL（apiSQL.php）を入力して保存してください。スプレッドシートURLは使用しません。
                                 </p>
                                 <div className="flex gap-2">
                                     <input type="text" value={localGasUrl} onChange={e => setLocalGasUrl(e.target.value)}
                                         className="flex-1 px-4 py-3 rounded-xl text-sm font-bold text-white outline-none"
                                         style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}
-                                        placeholder="https://script.google.com/macros/s/..." />
-                                    <button onClick={() => { if (localGasUrl) { onUpdateGasUrl(localGasUrl); alert('GAS URLを保存しました'); } }}
+                                        placeholder="https://your-server.com/pjctmgt/apiSQL.php" />
+                                    <button onClick={() => { if (localGasUrl) { onUpdateGasUrl(localGasUrl); alert('APIサーバーURLを保存しました'); } }}
                                         className="px-6 py-3 rounded-xl text-sm font-black text-white transition-all active:scale-95 flex items-center gap-2"
                                         style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
                                         <Save className="w-4 h-4" /> 保存

@@ -252,8 +252,21 @@ if ($method === 'GET') {
 
 if ($method === 'POST') {
     $input_content = file_get_contents('php://input');
+
+    // post_max_size 超過検出: CONTENT_LENGTHが存在するのに入力が空の場合
+    $content_length = (int)($_SERVER['CONTENT_LENGTH'] ?? 0);
+    if ($content_length > 0 && empty($input_content)) {
+        $limit = ini_get('post_max_size');
+        http_response_code(413);
+        echo json_encode([
+            'status' => 'error',
+            'message' => "POSTデータが大きすぎます (post_max_size={$limit}, 送信サイズ=" . round($content_length / 1024 / 1024, 1) . "MB)。サーバー管理者に連絡してください。"
+        ]);
+        exit;
+    }
+
     $data = json_decode($input_content, true);
-    
+
     if (!is_array($data)) {
         // payload形式ではない場合、一部のURL encodedも考慮
         $data = $_POST;
@@ -534,25 +547,36 @@ if ($method === 'POST') {
             $projects = $data['projects'] ?? [];
 
             // テーブルが存在しない場合は作成する
-            $pdo->exec("CREATE TABLE IF NOT EXISTS portal_settings (
-                setting_key VARCHAR(100) PRIMARY KEY,
-                setting_value LONGTEXT,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            try {
+                $pdo->exec("CREATE TABLE IF NOT EXISTS portal_settings (
+                    setting_key VARCHAR(100) PRIMARY KEY,
+                    setting_value LONGTEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            } catch (Exception $create_err) {
+                error_log('portal_settings CREATE TABLE failed: ' . $create_err->getMessage());
+            }
 
-            $json_val = json_encode($projects, JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR);
+            $json_val = json_encode($projects, JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR | JSON_INVALID_UTF8_SUBSTITUTE);
             if ($json_val === false) {
-                echo json_encode(['status' => 'error', 'message' => 'JSONエンコード失敗: ' . json_last_error_msg()]);
+                $json_error = json_last_error_msg();
+                error_log('save_portal_projects json_encode failed: ' . $json_error);
+                echo json_encode(['status' => 'error', 'message' => 'JSONエンコード失敗: ' . $json_error . ' (プロジェクト数:' . count($projects) . ')']);
                 exit;
             }
 
-            // ON DUPLICATE KEY UPDATE で VALUES() は MySQL 8.0.20+ で非推奨のため別名バインドを使用
+            $byte_size = strlen($json_val);
+            if ($byte_size > 60 * 1024 * 1024) {
+                echo json_encode(['status' => 'error', 'message' => 'データが大きすぎます (' . round($byte_size / 1024 / 1024, 1) . 'MB)。不要なプロジェクトを削除してください。']);
+                exit;
+            }
+
             $stmt = $pdo->prepare(
                 "INSERT INTO portal_settings (setting_key, setting_value) VALUES ('portal_projects', :val)
                  ON DUPLICATE KEY UPDATE setting_value = :val2, updated_at = CURRENT_TIMESTAMP"
             );
             $stmt->execute([':val' => $json_val, ':val2' => $json_val]);
-            echo json_encode(['status' => 'success', 'savedCount' => count($projects)]);
+            echo json_encode(['status' => 'success', 'savedCount' => count($projects), 'byteSize' => $byte_size]);
             exit;
         }
 

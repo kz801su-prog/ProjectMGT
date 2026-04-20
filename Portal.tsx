@@ -27,7 +27,15 @@ interface PortalProps {
 const Portal: React.FC<PortalProps> = ({ user, onOpenProject, onLogout, onTeamMembersLoaded }) => {
     const [projects, setProjects] = useState<ProjectMeta[]>(() => getProjects());
 
-    const [gasUrl, setGasUrl] = useState(() => localStorage.getItem('board_gas_url') || DEFAULT_GAS_URL);
+    const [gasUrl, setGasUrl] = useState(() => {
+        const stored = localStorage.getItem('board_gas_url') || DEFAULT_GAS_URL;
+        // 旧GAS URLが残っている場合はSQL APIに自動補正
+        if (stored.includes('script.google.com')) {
+            localStorage.setItem('board_gas_url', DEFAULT_GAS_URL);
+            return DEFAULT_GAS_URL;
+        }
+        return stored;
+    });
     const [viewMode, setViewMode] = useState<'projects' | 'benchmark' | 'executive'>(() =>
         (user.role === 'executive') ? 'executive' : 'projects'
     );
