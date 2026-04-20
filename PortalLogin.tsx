@@ -1,25 +1,54 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Shield, Lock, Eye, EyeOff, Sparkles } from 'lucide-react';
 import { PortalUser } from './portalTypes';
 import { getPortalUsers, savePortalUsers } from './projectDataService';
+import { fetchPortalUsers, savePortalUsers as savePortalUsersToSql } from './mysqlService';
 
 interface PortalLoginProps {
     onLogin: (user: PortalUser) => void;
+    apiUrl?: string;
 }
 
-const PortalLogin: React.FC<PortalLoginProps> = ({ onLogin }) => {
+const PortalLogin: React.FC<PortalLoginProps> = ({ onLogin, apiUrl }) => {
     const [name, setName] = useState('');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [error, setError] = useState('');
-    const [isSetup, setIsSetup] = useState(() => {
-        const users = getPortalUsers();
-        return users.length === 0;
-    });
+    const [isSetup, setIsSetup] = useState(false);
+    const [loading, setLoading] = useState(true);
     const [setupRole, setSetupRole] = useState<'admin' | 'manager' | 'user' | 'executive'>('admin');
 
-    const handleSubmit = (e: React.FormEvent) => {
+    // 起動時にMySQLからユーザーを取得してlocalStorageに同期
+    useEffect(() => {
+        const syncFromMysql = async () => {
+            if (apiUrl) {
+                try {
+                    const mysqlUsers = await fetchPortalUsers(apiUrl);
+                    if (mysqlUsers.length > 0) {
+                        const localUsers: PortalUser[] = mysqlUsers.map(u => ({
+                            id: `user-${u.employeeId || u.name}`,
+                            name: u.name,
+                            role: u.role,
+                            password: u.portalPassword,
+                            department: u.department,
+                            employeeId: u.employeeId,
+                            allowedProjectIds: u.allowedProjectIds || [],
+                        }));
+                        savePortalUsers(localUsers);
+                    }
+                } catch (e) {
+                    // MySQL取得失敗時はlocalStorageのデータで続行
+                }
+            }
+            const users = getPortalUsers();
+            setIsSetup(users.length === 0);
+            setLoading(false);
+        };
+        syncFromMysql();
+    }, [apiUrl]);
+
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
 
@@ -41,6 +70,21 @@ const PortalLogin: React.FC<PortalLoginProps> = ({ onLogin }) => {
                 password: password,
             };
             savePortalUsers([newUser]);
+            // MySQLにも保存
+            if (apiUrl) {
+                try {
+                    await savePortalUsersToSql(apiUrl, [{
+                        employeeId: newUser.id,
+                        name: newUser.name,
+                        department: '',
+                        portalPassword: password,
+                        role: setupRole,
+                        allowedProjectIds: [],
+                    }]);
+                } catch (e) {
+                    console.warn('MySQL保存失敗（localStorageに保存済み）:', e);
+                }
+            }
             onLogin(newUser);
         } else {
             // ログイン検証
@@ -57,6 +101,16 @@ const PortalLogin: React.FC<PortalLoginProps> = ({ onLogin }) => {
             onLogin(user);
         }
     };
+
+    if (loading) {
+        return (
+            <div className="min-h-screen flex items-center justify-center"
+                style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%)' }}
+            >
+                <div className="text-white/50 text-sm font-bold animate-pulse">認証情報を読み込み中...</div>
+            </div>
+        );
+    }
 
     return (
         <div className="min-h-screen flex items-center justify-center p-4"

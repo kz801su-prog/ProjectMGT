@@ -73,5 +73,9 @@ CREATE TABLE IF NOT EXISTS `portal_users` (
   `department` VARCHAR(100),
   `portal_password` VARCHAR(255),
   `role` VARCHAR(50) DEFAULT 'user',
+  `allowed_project_ids` JSON DEFAULT NULL,
   `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 既存テーブルへのカラム追加（初回のみ実行、エラーは無視）
+-- ALTER TABLE `portal_users` ADD COLUMN IF NOT EXISTS `allowed_project_ids` JSON DEFAULT NULL;

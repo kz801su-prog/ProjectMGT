@@ -153,6 +153,11 @@ if ($method === 'GET') {
     }
 
     if ($action === 'get_portal_users') {
+        // 既存テーブルに allowed_project_ids カラムがなければ追加
+        try {
+            $pdo->exec("ALTER TABLE portal_users ADD COLUMN allowed_project_ids JSON DEFAULT NULL");
+        } catch (Exception $e) { /* すでに存在する場合は無視 */ }
+
         $stmt = $pdo->prepare("SELECT * FROM portal_users");
         $stmt->execute();
         $users = [];
@@ -163,6 +168,7 @@ if ($method === 'GET') {
                 'department' => $row['department'],
                 'portalPassword' => $row['portal_password'],
                 'role' => $row['role'],
+                'allowedProjectIds' => safe_json_decode($row['allowed_project_ids'] ?? null),
             ];
         }
         echo json_encode(['status' => 'success', 'users' => $users]);
@@ -424,18 +430,30 @@ if ($method === 'POST') {
 
         if ($action === 'save_portal_users') {
             $users = $data['users'] ?? [];
+            // 既存テーブルに allowed_project_ids カラムがなければ追加
+            try {
+                $pdo->exec("ALTER TABLE portal_users ADD COLUMN allowed_project_ids JSON DEFAULT NULL");
+            } catch (Exception $e) { /* すでに存在する場合は無視 */ }
+
             $pdo->beginTransaction();
-            // IDが無い場合は追加のみだが、基本はUPSERT
-            $stmt = $pdo->prepare("INSERT INTO portal_users (employee_id, name, department, portal_password, role) VALUES (:employee_id, :name, :department, :portal_password, :role)
-                                    ON DUPLICATE KEY UPDATE name = VALUES(name), department = VALUES(department), portal_password = VALUES(portal_password), role = VALUES(role)");
+            $stmt = $pdo->prepare("INSERT INTO portal_users (employee_id, name, department, portal_password, role, allowed_project_ids)
+                                    VALUES (:employee_id, :name, :department, :portal_password, :role, :allowed_project_ids)
+                                    ON DUPLICATE KEY UPDATE
+                                        name = VALUES(name),
+                                        department = VALUES(department),
+                                        portal_password = VALUES(portal_password),
+                                        role = VALUES(role),
+                                        allowed_project_ids = VALUES(allowed_project_ids)");
             foreach ($users as $u) {
-                if (trim($u['employeeId'])) {
+                if (trim($u['employeeId'] ?? '')) {
+                    $allowed = $u['allowedProjectIds'] ?? [];
                     $stmt->execute([
                         ':employee_id' => $u['employeeId'],
                         ':name' => $u['name'] ?? '',
                         ':department' => $u['department'] ?? '',
                         ':portal_password' => $u['portalPassword'] ?? '',
-                        ':role' => $u['role'] ?? 'user'
+                        ':role' => $u['role'] ?? 'user',
+                        ':allowed_project_ids' => is_array($allowed) ? json_encode($allowed) : '[]',
                     ]);
                 }
             }

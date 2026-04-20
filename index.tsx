@@ -7,6 +7,7 @@ import PortalLogin from './PortalLogin';
 import { PortalUser } from './portalTypes';
 import { MemberInfo } from './types';
 import { getGlobalTeamMembers } from './projectDataService';
+import { DEFAULT_GAS_URL } from './constants';
 
 console.log("%c[SYSTEM] V13.0-MULTI-PROJECT LOADED", "color: #ef4444; font-weight: bold; font-size: 16px;");
 
@@ -59,7 +60,7 @@ const Root: React.FC = () => {
 
   switch (state.screen) {
     case 'portal-login':
-      return <PortalLogin onLogin={handlePortalLogin} />;
+      return <PortalLogin onLogin={handlePortalLogin} apiUrl={localStorage.getItem('board_gas_url') || DEFAULT_GAS_URL} />;
 
     case 'portal':
       return (
