@@ -63,21 +63,54 @@ if ($method === 'GET') {
             } catch (Exception $create_err) {
                 error_log('portal_settings CREATE TABLE failed: ' . $create_err->getMessage());
             }
-            $stmt = $pdo->prepare("SELECT setting_value, updated_at FROM portal_settings WHERE setting_key = 'portal_projects' LIMIT 1");
+
+            // portal_projects + 全 project_goalepics_* を一括取得
+            $stmt = $pdo->prepare(
+                "SELECT setting_key, setting_value, updated_at FROM portal_settings
+                 WHERE setting_key = 'portal_projects' OR setting_key LIKE 'project_goalepics_%'"
+            );
             $stmt->execute();
-            $row = $stmt->fetch();
-            if ($row && !empty($row['setting_value'])) {
-                $projects = json_decode($row['setting_value'], true);
+            $rows = $stmt->fetchAll();
+
+            $projects_json = null;
+            $updated_at = null;
+            $goalepics_map = [];
+
+            foreach ($rows as $r) {
+                if ($r['setting_key'] === 'portal_projects') {
+                    $projects_json = $r['setting_value'];
+                    $updated_at = $r['updated_at'];
+                } elseif (strpos($r['setting_key'], 'project_goalepics_') === 0) {
+                    $pid = substr($r['setting_key'], strlen('project_goalepics_'));
+                    $goalepics_map[$pid] = json_decode($r['setting_value'], true) ?: [];
+                }
+            }
+
+            if ($projects_json && !empty($projects_json)) {
+                $projects = json_decode($projects_json, true);
+                if (is_array($projects)) {
+                    // goalEpicsをプロジェクトに付加（分離保存対応 + 旧形式の埋め込みも保持）
+                    foreach ($projects as &$p) {
+                        $pid = $p['id'] ?? '';
+                        if (isset($goalepics_map[$pid])) {
+                            $p['goalEpics'] = $goalepics_map[$pid];
+                        }
+                        // goalEpicsが未設定の場合は空配列をデフォルト
+                        if (!isset($p['goalEpics'])) {
+                            $p['goalEpics'] = [];
+                        }
+                    }
+                    unset($p);
+                }
                 echo json_encode([
                     'status' => 'success',
                     'projects' => is_array($projects) ? $projects : [],
-                    'updatedAt' => $row['updated_at'],
+                    'updatedAt' => $updated_at,
                 ]);
             } else {
                 echo json_encode(['status' => 'success', 'projects' => []]);
             }
         } catch (Exception $e) {
-            // テーブルが存在しない場合は空配列を返す（エラーにしない）
             $msg = $e->getMessage();
             if (strpos($msg, "doesn't exist") !== false || strpos($msg, 'Table') !== false) {
                 echo json_encode(['status' => 'success', 'projects' => [], 'note' => 'table_not_found']);
@@ -546,7 +579,6 @@ if ($method === 'POST') {
         if ($action === 'save_portal_projects') {
             $projects = $data['projects'] ?? [];
 
-            // テーブルが存在しない場合は作成する
             try {
                 $pdo->exec("CREATE TABLE IF NOT EXISTS portal_settings (
                     setting_key VARCHAR(100) PRIMARY KEY,
@@ -557,17 +589,37 @@ if ($method === 'POST') {
                 error_log('portal_settings CREATE TABLE failed: ' . $create_err->getMessage());
             }
 
-            $json_val = json_encode($projects, JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR | JSON_INVALID_UTF8_SUBSTITUTE);
-            if ($json_val === false) {
-                $json_error = json_last_error_msg();
-                error_log('save_portal_projects json_encode failed: ' . $json_error);
-                echo json_encode(['status' => 'error', 'message' => 'JSONエンコード失敗: ' . $json_error . ' (プロジェクト数:' . count($projects) . ')']);
-                exit;
+            $pdo->beginTransaction();
+
+            // goalEpicsをプロジェクトから分離して個別に保存（データサイズ削減）
+            $projects_slim = [];
+            $goalepics_upsert = $pdo->prepare(
+                "INSERT INTO portal_settings (setting_key, setting_value) VALUES (:key, :val)
+                 ON DUPLICATE KEY UPDATE setting_value = :val2, updated_at = CURRENT_TIMESTAMP"
+            );
+            foreach ($projects as $p) {
+                $pid = $p['id'] ?? '';
+                $epics = $p['goalEpics'] ?? [];
+                $p_slim = $p;
+                unset($p_slim['goalEpics']);
+                $projects_slim[] = $p_slim;
+
+                // プロジェクトごとのgoalEpicsを個別キーで保存
+                if (!empty($pid)) {
+                    $epics_json = json_encode($epics, JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR);
+                    $goalepics_upsert->execute([
+                        ':key'  => 'project_goalepics_' . $pid,
+                        ':val'  => $epics_json,
+                        ':val2' => $epics_json,
+                    ]);
+                }
             }
 
-            $byte_size = strlen($json_val);
-            if ($byte_size > 60 * 1024 * 1024) {
-                echo json_encode(['status' => 'error', 'message' => 'データが大きすぎます (' . round($byte_size / 1024 / 1024, 1) . 'MB)。不要なプロジェクトを削除してください。']);
+            // goalEpics除外済みのプロジェクト一覧を保存
+            $json_val = json_encode($projects_slim, JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR);
+            if ($json_val === false) {
+                $pdo->rollBack();
+                echo json_encode(['status' => 'error', 'message' => 'JSONエンコード失敗: ' . json_last_error_msg()]);
                 exit;
             }
 
@@ -576,7 +628,9 @@ if ($method === 'POST') {
                  ON DUPLICATE KEY UPDATE setting_value = :val2, updated_at = CURRENT_TIMESTAMP"
             );
             $stmt->execute([':val' => $json_val, ':val2' => $json_val]);
-            echo json_encode(['status' => 'success', 'savedCount' => count($projects), 'byteSize' => $byte_size]);
+
+            $pdo->commit();
+            echo json_encode(['status' => 'success', 'savedCount' => count($projects)]);
             exit;
         }
 
