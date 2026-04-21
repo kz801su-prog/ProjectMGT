@@ -85,9 +85,8 @@ const PortalLogin: React.FC<PortalLoginProps> = ({ onLogin, apiUrl }) => {
 
         const users = getPortalUsers();
         const input = loginEmployeeId.trim();
-        // 社員ID → id → 氏名の順で検索
+        // 社員ID → 氏名の順で検索
         const user = users.find(u => u.employeeId === input)
-            ?? users.find(u => u.id === input)
             ?? users.find(u => u.name === input);
         if (!user) { setError('ユーザーが見つかりません（社員IDまたは氏名を確認してください）'); return; }
         if (user.password !== loginPassword) { setError('パスワードが正しくありません'); return; }
