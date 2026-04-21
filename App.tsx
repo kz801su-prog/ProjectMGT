@@ -29,10 +29,11 @@ interface AppProps {
   projectId?: string;
   portalUser?: PortalUser;
   onBackToPortal?: () => void;
+  onLogout?: () => void;
   globalTeamMembers?: MemberInfo[];
 }
 
-const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal, globalTeamMembers }) => {
+const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal, onLogout, globalTeamMembers }) => {
   // プロジェクトメタを1回だけ取得してすべての派生値に使い回す
   const currentProjectMeta = useMemo(() =>
     projectId ? getProjectsMeta().find(p => p.id === projectId) : undefined,
@@ -611,11 +612,12 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal, global
     localStorage.removeItem('board_user_name');
     localStorage.removeItem('portal_current_user');
     localStorage.removeItem('portal_current_project');
-    setTasks([]);
-    setIsInitialLoadDone(false);
-    setSettings(prev => ({ ...prev, userName: '' }));
     setShowLogoutModal(false);
-    window.location.reload();
+    if (onLogout) {
+      onLogout();
+    } else {
+      window.location.reload();
+    }
   };
 
   const filteredTasks = useMemo(() => {

@@ -20,33 +20,21 @@ const Root: React.FC = () => {
   // 社員マスター（Portal起動時にSQLから同期、設定変更時も更新）
   const [globalTeamMembers, setGlobalTeamMembers] = useState<MemberInfo[]>(() => getGlobalTeamMembers() as MemberInfo[]);
 
-  const [state, setState] = useState<AppState>(() => {
-    // セッション復元: ログイン状態のみ復元（プロジェクトには自動で入らない）
-    // プロジェクトへはポータル画面から手動でクリックして入る
-    localStorage.removeItem('portal_current_project'); // 前回のプロジェクト選択をクリア
-    const savedUser = localStorage.getItem('portal_current_user');
-    if (savedUser) {
-      try {
-        const user = JSON.parse(savedUser) as PortalUser;
-        return { screen: 'portal', user };
-      } catch { }
-    }
-    return { screen: 'portal-login' };
-  });
+  const [state, setState] = useState<AppState>({ screen: 'portal-login' });
 
   const handlePortalLogin = (user: PortalUser) => {
-    localStorage.setItem('portal_current_user', JSON.stringify(user));
+    // セッションはメモリのみ（localStorageに保存しない＝リロードで自動ログインしない）
+    localStorage.removeItem('portal_current_user');
+    localStorage.removeItem('portal_current_project');
     setState({ screen: 'portal', user });
   };
 
   const handleOpenProject = (projectId: string) => {
     if (state.screen !== 'portal') return;
-    localStorage.setItem('portal_current_project', projectId);
     setState({ screen: 'project', user: state.user, projectId });
   };
 
   const handleBackToPortal = () => {
-    localStorage.removeItem('portal_current_project');
     if (state.screen === 'project') {
       setState({ screen: 'portal', user: state.user });
     }
@@ -78,6 +66,7 @@ const Root: React.FC = () => {
           projectId={state.projectId}
           portalUser={state.user}
           onBackToPortal={handleBackToPortal}
+          onLogout={handlePortalLogout}
           globalTeamMembers={globalTeamMembers}
         />
       );
