@@ -80,12 +80,16 @@ const PortalLogin: React.FC<PortalLoginProps> = ({ onLogin, apiUrl }) => {
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
-        if (!loginEmployeeId.trim()) { setError('社員IDを入力してください'); return; }
+        if (!loginEmployeeId.trim()) { setError('社員IDまたは氏名を入力してください'); return; }
         if (!loginPassword.trim()) { setError('パスワードを入力してください'); return; }
 
         const users = getPortalUsers();
-        const user = users.find(u => (u.employeeId || u.id) === loginEmployeeId.trim());
-        if (!user) { setError('社員IDが見つかりません'); return; }
+        const input = loginEmployeeId.trim();
+        // 社員ID → id → 氏名の順で検索
+        const user = users.find(u => u.employeeId === input)
+            ?? users.find(u => u.id === input)
+            ?? users.find(u => u.name === input);
+        if (!user) { setError('ユーザーが見つかりません（社員IDまたは氏名を確認してください）'); return; }
         if (user.password !== loginPassword) { setError('パスワードが正しくありません'); return; }
         onLogin(user);
     };
@@ -218,7 +222,7 @@ const PortalLogin: React.FC<PortalLoginProps> = ({ onLogin, apiUrl }) => {
                         <form onSubmit={handleLogin} className="px-8 pb-6 space-y-5">
                             <div>
                                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">
-                                    社員ID
+                                    社員ID または 氏名
                                 </label>
                                 <input
                                     type="text"
@@ -229,7 +233,7 @@ const PortalLogin: React.FC<PortalLoginProps> = ({ onLogin, apiUrl }) => {
                                     onFocus={inputFocus}
                                     onBlur={inputBlur}
                                     autoComplete="username"
-                                    placeholder="社員IDを入力"
+                                    placeholder="社員IDまたは氏名を入力"
                                 />
                             </div>
                             <div>
