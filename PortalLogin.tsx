@@ -25,8 +25,10 @@ const PortalLogin: React.FC<PortalLoginProps> = ({ onLogin, apiUrl }) => {
             if (apiUrl) {
                 try {
                     const mysqlUsers = await fetchPortalUsers(apiUrl);
-                    if (mysqlUsers.length > 0) {
-                        const localUsers: PortalUser[] = mysqlUsers.map(u => ({
+                    // パスワードが設定されているユーザーのみ有効とする
+                    const usersWithPassword = mysqlUsers.filter(u => u.portalPassword && u.portalPassword.trim() !== '');
+                    if (usersWithPassword.length > 0) {
+                        const localUsers: PortalUser[] = usersWithPassword.map(u => ({
                             id: `user-${u.employeeId || u.name}`,
                             name: u.name,
                             role: u.role,
@@ -36,6 +38,9 @@ const PortalLogin: React.FC<PortalLoginProps> = ({ onLogin, apiUrl }) => {
                             allowedProjectIds: u.allowedProjectIds || [],
                         }));
                         savePortalUsers(localUsers);
+                    } else {
+                        // パスワード未設定ユーザーのみ → 初期設定モードにするためlocalStorageをクリア
+                        savePortalUsers([]);
                     }
                 } catch (e) {
                     // MySQL取得失敗時はlocalStorageのデータで続行
