@@ -609,6 +609,8 @@ const App: React.FC<AppProps> = ({ projectId, portalUser, onBackToPortal, global
 
   const executeLogout = () => {
     localStorage.removeItem('board_user_name');
+    localStorage.removeItem('portal_current_user');
+    localStorage.removeItem('portal_current_project');
     setTasks([]);
     setIsInitialLoadDone(false);
     setSettings(prev => ({ ...prev, userName: '' }));
