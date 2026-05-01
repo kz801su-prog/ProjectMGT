@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Shield, Lock, Eye, EyeOff, Sparkles, UserPlus, RefreshCw } from 'lucide-react';
 import { PortalUser } from './portalTypes';
 import { getPortalUsers, savePortalUsers } from './projectDataService';
-import { fetchPortalUsers, savePortalUsers as savePortalUsersToSql } from './mysqlService';
+import { fetchPortalUsers, fetchTeamMembersFromSql, savePortalUsers as savePortalUsersToSql } from './mysqlService';
 
 interface PortalLoginProps {
     onLogin: (user: PortalUser) => void;
@@ -23,6 +23,8 @@ const inputBlur = (e: React.FocusEvent<HTMLInputElement | HTMLSelectElement>) =>
     e.target.style.boxShadow = 'none';
 };
 
+const normalizeName = (name: string) => name.trim().replace(/\s+/g, '');
+
 const PortalLogin: React.FC<PortalLoginProps> = ({ onLogin, apiUrl }) => {
     // ログイン用
     const [loginEmployeeId, setLoginEmployeeId] = useState('');
@@ -39,6 +41,7 @@ const PortalLogin: React.FC<PortalLoginProps> = ({ onLogin, apiUrl }) => {
     const [error, setError] = useState('');
     const [successMsg, setSuccessMsg] = useState('');
     const [isSetup, setIsSetup] = useState(false);
+    const [isRegisterMode, setIsRegisterMode] = useState(false);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
 
@@ -70,11 +73,31 @@ const PortalLogin: React.FC<PortalLoginProps> = ({ onLogin, apiUrl }) => {
                 }
             }
             const users = getPortalUsers();
-            setIsSetup(users.length === 0);
+            const shouldShowSetup = users.length === 0;
+            setIsSetup(shouldShowSetup);
+            setIsRegisterMode(shouldShowSetup);
             setLoading(false);
         };
         syncFromMysql();
     }, [apiUrl]);
+
+    const syncLocalUsersFromMysql = async (): Promise<PortalUser[]> => {
+        if (!apiUrl) return getPortalUsers();
+        const mysqlUsers = await fetchPortalUsers(apiUrl);
+        const usersWithPassword = mysqlUsers.filter(u => u.portalPassword && u.portalPassword.trim() !== '');
+        const localUsers: PortalUser[] = usersWithPassword.map(u => ({
+            id: u.employeeId || `user-${u.name}`,
+            name: u.name,
+            role: u.role as PortalUser['role'],
+            password: u.portalPassword,
+            department: u.department,
+            employeeId: u.employeeId,
+            allowedProjectIds: u.allowedProjectIds || [],
+        }));
+        savePortalUsers(localUsers);
+        setIsSetup(localUsers.length === 0);
+        return localUsers;
+    };
 
     // ログイン処理
     const handleLogin = async (e: React.FormEvent) => {
@@ -102,42 +125,69 @@ const PortalLogin: React.FC<PortalLoginProps> = ({ onLogin, apiUrl }) => {
         if (!setupName.trim()) { setError('氏名を入力してください'); return; }
         if (!setupPassword.trim()) { setError('パスワードを入力してください'); return; }
         if (setupPassword.length < 4) { setError('パスワードは4文字以上にしてください'); return; }
+        if (!apiUrl) { setError('API URLが未設定のため、社員マスター照会ができません'); return; }
 
         setSaving(true);
-        const newUser: PortalUser = {
-            id: setupEmployeeId.trim(),
-            name: setupName.trim(),
-            role: setupRole,
-            password: setupPassword,
-            employeeId: setupEmployeeId.trim(),
-        };
+        try {
+            const employeeId = setupEmployeeId.trim();
+            const enteredName = setupName.trim();
+            const [mysqlUsers, teamMembers] = await Promise.all([
+                fetchPortalUsers(apiUrl),
+                fetchTeamMembersFromSql(apiUrl),
+            ]);
 
-        // localStorageに保存
-        savePortalUsers([newUser]);
+            const matchedMember = teamMembers.find((m: any) =>
+                (m.employeeId || '').trim() === employeeId &&
+                normalizeName(m.name || '') === normalizeName(enteredName)
+            );
+            const mysqlUserById = mysqlUsers.find(u => (u.employeeId || '').trim() === employeeId);
 
-        // MySQLに保存
-        if (apiUrl) {
-            try {
-                await savePortalUsersToSql(apiUrl, [{
-                    employeeId: setupEmployeeId.trim(),
-                    name: setupName.trim(),
-                    department: '',
-                    portalPassword: setupPassword,
-                    role: setupRole,
-                    allowedProjectIds: [],
-                }]);
-                setSuccessMsg('登録完了！ログインします...');
-                setTimeout(() => onLogin(newUser), 800);
-            } catch (e) {
-                // MySQL失敗でもlocalStorageには保存済みなのでログイン可能
-                setSuccessMsg('登録完了（SQLへの保存は次回同期時）。ログインします...');
-                setTimeout(() => onLogin(newUser), 800);
+            if (!matchedMember && !mysqlUserById) {
+                setError('社員マスターに一致する社員ID/氏名がありません。入力内容を確認してください。');
+                return;
             }
-        } else {
+
+            if (mysqlUserById && normalizeName(mysqlUserById.name || '') !== normalizeName(enteredName)) {
+                setError('社員IDに紐づく氏名が一致しません。正しい氏名を入力してください。');
+                return;
+            }
+
+            if (mysqlUserById?.portalPassword && mysqlUserById.portalPassword.trim() !== '') {
+                setError('この社員IDはすでに登録済みです。ログイン画面からサインインしてください。');
+                return;
+            }
+
+            const registeredName = matchedMember?.name || mysqlUserById?.name || enteredName;
+            const registeredDepartment = matchedMember?.department || mysqlUserById?.department || '';
+            const registeredRole = (mysqlUserById?.role as PortalUser['role']) || setupRole;
+            const allowedProjectIds = mysqlUserById?.allowedProjectIds || [];
+
+            await savePortalUsersToSql(apiUrl, [{
+                employeeId,
+                name: registeredName,
+                department: registeredDepartment,
+                portalPassword: setupPassword,
+                role: registeredRole,
+                allowedProjectIds,
+            }]);
+
+            const syncedUsers = await syncLocalUsersFromMysql();
+            const newUser = syncedUsers.find(u => u.employeeId === employeeId);
+            if (!newUser) {
+                setError('登録は完了しましたが、ログイン情報の同期に失敗しました。再読み込みしてください。');
+                return;
+            }
+
             setSuccessMsg('登録完了！ログインします...');
+            setIsRegisterMode(false);
+            setLoginEmployeeId(employeeId);
+            setLoginPassword('');
             setTimeout(() => onLogin(newUser), 800);
+        } catch (e: any) {
+            setError(`登録に失敗しました: ${e?.message || '不明なエラー'}`);
+        } finally {
+            setSaving(false);
         }
-        setSaving(false);
     };
 
     if (loading) {
@@ -173,27 +223,27 @@ const PortalLogin: React.FC<PortalLoginProps> = ({ onLogin, apiUrl }) => {
                     <div className="p-8 pb-4 text-center">
                         <div className="inline-flex items-center justify-center w-20 h-20 rounded-3xl mb-6 shadow-2xl relative"
                             style={{
-                                background: isSetup
+                                background: isRegisterMode
                                     ? 'linear-gradient(135deg, #f59e0b, #d97706)'
                                     : 'linear-gradient(135deg, #ef4444, #dc2626)',
-                                boxShadow: isSetup
+                                boxShadow: isRegisterMode
                                     ? '0 20px 60px rgba(245,158,11,0.3)'
                                     : '0 20px 60px rgba(239,68,68,0.3)',
                             }}
                         >
-                            {isSetup ? <UserPlus className="w-10 h-10 text-white" /> : <Shield className="w-10 h-10 text-white" />}
+                            {isRegisterMode ? <UserPlus className="w-10 h-10 text-white" /> : <Shield className="w-10 h-10 text-white" />}
                             <div className="absolute -top-1 -right-1 w-6 h-6 bg-amber-400 rounded-full flex items-center justify-center">
                                 <Sparkles className="w-3 h-3 text-amber-900" />
                             </div>
                         </div>
                         <h1 className="text-3xl font-black text-white mb-2 tracking-tight">Project MGT</h1>
                         <p className="text-xs font-bold uppercase tracking-[0.3em]"
-                            style={{ color: isSetup ? '#fbbf24' : '#94a3b8' }}>
-                            {isSetup ? '初期管理者登録' : 'PORTAL LOGIN'}
+                            style={{ color: isRegisterMode ? '#fbbf24' : '#94a3b8' }}>
+                            {isRegisterMode ? '新規登録' : 'PORTAL LOGIN'}
                         </p>
-                        {isSetup && (
-                            <p className="text-[10px] text-amber-400/70 mt-2 font-bold">
-                                最初の管理者アカウントを作成してください
+                        {isRegisterMode && (
+                            <p className="text-xs text-amber-300 mt-2 font-bold">
+                                社員マスター照会後にパスワードを登録します
                             </p>
                         )}
                     </div>
@@ -217,7 +267,7 @@ const PortalLogin: React.FC<PortalLoginProps> = ({ onLogin, apiUrl }) => {
                     </div>
 
                     {/* ===== ログインフォーム ===== */}
-                    {!isSetup && (
+                    {!isRegisterMode && (
                         <form onSubmit={handleLogin} className="px-8 pb-6 space-y-5">
                             <div>
                                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">
@@ -266,11 +316,24 @@ const PortalLogin: React.FC<PortalLoginProps> = ({ onLogin, apiUrl }) => {
                                 </span>
                                 <div className="absolute inset-0 bg-white/10 translate-y-full group-hover:translate-y-0 transition-transform duration-300" />
                             </button>
+                            {!isSetup && (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setError('');
+                                        setSuccessMsg('');
+                                        setIsRegisterMode(true);
+                                    }}
+                                    className="w-full p-3 rounded-2xl font-black text-sm transition-all border border-amber-400/40 text-amber-300 hover:bg-amber-400/10"
+                                >
+                                    新規登録はこちら
+                                </button>
+                            )}
                         </form>
                     )}
 
                     {/* ===== 初期設定フォーム ===== */}
-                    {isSetup && (
+                    {isRegisterMode && (
                         <form onSubmit={handleSetup} className="px-8 pb-6 space-y-4">
                             <div>
                                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">
@@ -354,38 +417,27 @@ const PortalLogin: React.FC<PortalLoginProps> = ({ onLogin, apiUrl }) => {
                                 </span>
                                 <div className="absolute inset-0 bg-white/10 translate-y-full group-hover:translate-y-0 transition-transform duration-300" />
                             </button>
+                            {!isSetup && (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setError('');
+                                        setSuccessMsg('');
+                                        setIsRegisterMode(false);
+                                    }}
+                                    className="w-full p-3 rounded-2xl font-black text-sm transition-all border border-slate-300/30 text-slate-200 hover:bg-white/10"
+                                >
+                                    ログイン画面に戻る
+                                </button>
+                            )}
                         </form>
                     )}
 
                     {/* フッター */}
-                    <div className="px-8 pb-6 text-center space-y-3">
-                        <p className="text-[10px] text-slate-600 font-bold">
+                    <div className="px-8 pb-6 text-center">
+                        <p className="text-xs text-slate-300 font-bold">
                             Project MGT Portal — Multi-Project Management System
                         </p>
-                        <button
-                            type="button"
-                            onClick={() => {
-                                if (!window.confirm('ログイン設定を初期化しますか？\n\n⚠️ プロジェクト・タスク・目標データは消去されません。\nログインユーザー設定のみリセットされます。')) return;
-                                const keysToKeep: string[] = [];
-                                for (let i = 0; i < localStorage.length; i++) {
-                                    const key = localStorage.key(i);
-                                    if (key && (
-                                        key.startsWith('portal_projects') ||
-                                        key.startsWith('portal_team_members') ||
-                                        key.startsWith('project_') ||
-                                        key.startsWith('board_')
-                                    )) keysToKeep.push(key);
-                                }
-                                const savedData: Record<string, string> = {};
-                                keysToKeep.forEach(key => { savedData[key] = localStorage.getItem(key) || ''; });
-                                localStorage.clear();
-                                Object.entries(savedData).forEach(([key, val]) => { if (val) localStorage.setItem(key, val); });
-                                window.location.reload();
-                            }}
-                            className="text-[9px] text-slate-700 hover:text-red-400 font-bold transition-colors underline underline-offset-4 opacity-50 hover:opacity-100"
-                        >
-                            ログイン設定を初期化（プロジェクトデータは保持）
-                        </button>
                     </div>
                 </div>
             </div>

@@ -53,6 +53,25 @@ const EditModal: React.FC<EditModalProps> = ({
   const [editStart, setEditStart] = useState(selectedTask.startDate || selectedTask.date);
   const [editDue, setEditDue] = useState(selectedTask.dueDate);
   const [editStatus, setEditStatus] = useState(selectedTask.status);
+
+  const calcDays = (s: string, d: string) => Math.max(1, Math.ceil((new Date(d).getTime() - new Date(s).getTime()) / 86400000));
+  const [editDuration, setEditDuration] = useState(() => calcDays(selectedTask.startDate || selectedTask.date, selectedTask.dueDate));
+
+  const onStartChange = (v: string) => {
+    setEditStart(v);
+    const newDue = new Date(new Date(v).getTime() + editDuration * 86400000);
+    setEditDue(newDue.toISOString().split('T')[0]);
+  };
+  const onDueChange = (v: string) => {
+    setEditDue(v);
+    setEditDuration(calcDays(editStart, v));
+  };
+  const onDurationChange = (days: number) => {
+    const d = Math.max(1, days);
+    setEditDuration(d);
+    const newDue = new Date(new Date(editStart).getTime() + d * 86400000);
+    setEditDue(newDue.toISOString().split('T')[0]);
+  };
   const [newComment, setNewComment] = useState('');
   const [newFileName, setNewFileName] = useState('');
   const [newFileUrl, setNewFileUrl] = useState('');
@@ -147,24 +166,42 @@ const EditModal: React.FC<EditModalProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                  <label className="text-xs font-black text-slate-400 uppercase tracking-widest block mb-2">開始日</label>
-                  <input
-                    type="date"
-                    value={editStart}
-                    onChange={(e) => setEditStart(e.target.value)}
-                    className="w-full bg-white border-2 border-slate-200 rounded-xl px-4 py-3 font-bold text-slate-800 focus:border-red-500 outline-none text-xs"
-                  />
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest block mb-2">開始日</label>
+                    <input
+                      type="date"
+                      value={editStart}
+                      onChange={(e) => onStartChange(e.target.value)}
+                      className="w-full bg-white border-2 border-slate-200 rounded-xl px-4 py-3 font-bold text-slate-800 focus:border-red-500 outline-none text-xs"
+                    />
+                  </div>
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest block mb-2">完了予定</label>
+                    <input
+                      type="date"
+                      value={editDue}
+                      onChange={(e) => onDueChange(e.target.value)}
+                      className="w-full bg-white border-2 border-slate-200 rounded-xl px-4 py-3 font-bold text-slate-800 focus:border-red-500 outline-none text-xs"
+                    />
+                  </div>
                 </div>
-                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                  <label className="text-xs font-black text-slate-400 uppercase tracking-widest block mb-2">完了予定</label>
-                  <input
-                    type="date"
-                    value={editDue}
-                    onChange={(e) => setEditDue(e.target.value)}
-                    className="w-full bg-white border-2 border-slate-200 rounded-xl px-4 py-3 font-bold text-slate-800 focus:border-red-500 outline-none text-xs"
-                  />
+                <div className="bg-indigo-50 p-4 rounded-2xl border border-indigo-100 flex items-center gap-4">
+                  <div className="flex-1">
+                    <label className="text-xs font-black text-indigo-400 uppercase tracking-widest block mb-2">工数</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min="1"
+                        value={editDuration}
+                        onChange={(e) => onDurationChange(parseInt(e.target.value) || 1)}
+                        className="w-20 bg-white border-2 border-indigo-200 rounded-xl px-3 py-2 font-black text-slate-800 focus:border-indigo-500 outline-none text-sm text-center"
+                      />
+                      <span className="text-xs font-bold text-indigo-500">日間</span>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-indigo-400 font-bold leading-relaxed flex-1">開始日 + 工数 → 完了日<br/>を自動計算します</p>
                 </div>
               </div>
 
@@ -274,6 +311,9 @@ export const TimelineView: React.FC<Props> = ({ tasks, members, onUpdateTask, on
 
   // Context Menu State
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, taskId: string, isDeleted: boolean } | null>(null);
+
+  const [showBackwardModal, setShowBackwardModal] = useState(false);
+  const [backwardDeadlineInput, setBackwardDeadlineInput] = useState('');
 
   const [deadlineDates, setDeadlineDates] = useState<{ date: string, label: string }[]>(() => {
     try {
@@ -669,6 +709,56 @@ export const TimelineView: React.FC<Props> = ({ tasks, members, onUpdateTask, on
     }
   };
 
+  const handleBackwardSchedule = () => {
+    if (!backwardDeadlineInput) return;
+    const deadlineDate = new Date(backwardDeadlineInput);
+
+    const durations: Record<string, number> = {};
+    tasks.forEach(t => {
+      const s = t.startDate ? new Date(t.startDate) : new Date(t.date);
+      const d = t.dueDate ? new Date(t.dueDate) : new Date(s.getTime() + 86400000 * 7);
+      durations[t.id] = Math.max(1, Math.ceil((d.getTime() - s.getTime()) / 86400000));
+    });
+
+    const successors: Record<string, string[]> = {};
+    tasks.forEach(t => { successors[t.id] = []; });
+    tasks.forEach(t => {
+      t.dependencies?.forEach(depId => {
+        if (successors[depId]) successors[depId].push(t.id);
+      });
+    });
+
+    const endTasks = tasks.filter(t => !t.isSoftDeleted && successors[t.id].length === 0);
+
+    const newDates: Record<string, { startDate: string; dueDate: string }> = {};
+    const queue: { id: string; dueDate: Date }[] = endTasks.map(t => ({ id: t.id, dueDate: deadlineDate }));
+    const processed = new Set<string>();
+
+    while (queue.length > 0) {
+      const item = queue.shift()!;
+      if (processed.has(item.id)) continue;
+      processed.add(item.id);
+
+      const dur = durations[item.id];
+      const taskStart = new Date(item.dueDate.getTime() - dur * 86400000);
+      newDates[item.id] = {
+        startDate: taskStart.toISOString().split('T')[0],
+        dueDate: item.dueDate.toISOString().split('T')[0]
+      };
+
+      const task = tasks.find(t => t.id === item.id);
+      task?.dependencies?.forEach(predId => {
+        const predDue = new Date(taskStart.getTime() - 86400000);
+        queue.push({ id: predId, dueDate: predDue });
+      });
+    }
+
+    const updatedTasks = tasks.map(t => newDates[t.id] ? { ...t, ...newDates[t.id] } : t);
+    if (onUpdateTasks) onUpdateTasks(updatedTasks);
+    setShowBackwardModal(false);
+    setBackwardDeadlineInput('');
+  };
+
   const handleCellClick = (dateIndex: number) => {
     if (dateIndex >= 0 && dateIndex < dates.length) {
       const dateStr = dates[dateIndex].toISOString().split('T')[0];
@@ -724,6 +814,14 @@ export const TimelineView: React.FC<Props> = ({ tasks, members, onUpdateTask, on
             <button onClick={() => setViewMode('1month')} className={`px-5 py-2 rounded-xl text-xs font-black transition-all ${viewMode === '1month' ? 'bg-white shadow text-red-600' : 'text-slate-400 hover:text-slate-600'}`}>1.5ヶ月</button>
             <button onClick={() => setViewMode('3months')} className={`px-5 py-2 rounded-xl text-xs font-black transition-all ${viewMode === '3months' ? 'bg-white shadow text-red-600' : 'text-slate-400 hover:text-slate-600'}`}>3ヶ月</button>
           </div>
+
+          <button
+            onClick={() => setShowBackwardModal(true)}
+            className="flex items-center gap-1.5 px-4 py-2.5 bg-indigo-50 text-indigo-700 rounded-2xl text-xs font-black hover:bg-indigo-100 transition-all border border-indigo-100"
+            title="締切日からスケジュールを逆算"
+          >
+            ↩ 逆算
+          </button>
         </div>
       </div>
 
@@ -962,6 +1060,37 @@ export const TimelineView: React.FC<Props> = ({ tasks, members, onUpdateTask, on
           </div>
         </div>
       </div>
+
+      {/* Backward Scheduling Modal */}
+      {showBackwardModal && (
+        <div className="fixed inset-0 z-[400] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2rem] p-8 w-full max-w-sm shadow-2xl border border-white/20 animate-in zoom-in duration-200">
+            <h3 className="text-lg font-black text-slate-800 mb-2">↩ 逆算スケジューリング</h3>
+            <p className="text-xs text-slate-400 font-bold mb-6 leading-relaxed">
+              締切日を基準に、依存関係を遡って全タスクの<br/>開始・終了日を自動計算します。
+            </p>
+            <div className="space-y-2 mb-6">
+              <label className="text-xs font-black text-slate-400 uppercase tracking-widest block">プロジェクト締切日</label>
+              <input
+                type="date"
+                value={backwardDeadlineInput}
+                onChange={(e) => setBackwardDeadlineInput(e.target.value)}
+                className="w-full bg-slate-50 border-2 border-slate-200 rounded-xl px-4 py-3 font-bold text-slate-800 focus:border-indigo-500 outline-none text-sm"
+                autoFocus
+              />
+            </div>
+            <div className="bg-amber-50 border border-amber-100 rounded-2xl p-3 mb-6">
+              <p className="text-[10px] font-bold text-amber-600">⚠ 全タスクの日程が上書きされます。実行前にご確認ください。</p>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => { setShowBackwardModal(false); setBackwardDeadlineInput(''); }} className="flex-1 py-3 bg-slate-100 text-slate-600 rounded-2xl font-black text-sm hover:bg-slate-200 transition-all">キャンセル</button>
+              <button onClick={handleBackwardSchedule} disabled={!backwardDeadlineInput} className="flex-1 py-3 bg-indigo-600 text-white rounded-2xl font-black text-sm hover:bg-indigo-700 transition-all disabled:opacity-40 flex items-center justify-center gap-2">
+                逆算実行
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Context Menu */}
       {contextMenu && (
